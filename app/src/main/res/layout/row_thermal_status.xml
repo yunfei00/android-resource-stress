@@ -1,0 +1,1 @@
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal"><TextView style="@style/MetricLabel" android:text="@string/label_thermal_status"/><TextView android:id="@+id/thermalStatusValue" style="@style/MetricValue" android:text="N/A"/></LinearLayout>

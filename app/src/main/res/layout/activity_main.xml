@@ -1,0 +1,231 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/background"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="@dimen/screen_padding">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:letterSpacing="0.08"
+            android:text="@string/app_title"
+            android:textColor="@color/text_primary"
+            android:textSize="20sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="3dp"
+            android:text="@string/phase_label"
+            android:textColor="@color/text_secondary"
+            android:textSize="11sp" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="18dp"
+            android:layout_marginBottom="14dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <TextView
+                android:id="@+id/statusValue"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/status_stopped"
+                android:textColor="@color/text_secondary"
+                android:textSize="18sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/elapsedValue"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:fontFamily="monospace"
+                android:text="@string/elapsed_zero"
+                android:textColor="@color/text_primary"
+                android:textSize="18sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+
+        <LinearLayout style="@style/SectionCard" android:orientation="vertical">
+            <TextView style="@style/SectionTitle" android:text="@string/section_device" />
+            <include layout="@layout/row_manufacturer" />
+            <include layout="@layout/row_model" />
+            <include layout="@layout/row_android" />
+            <include layout="@layout/row_sdk" />
+            <include layout="@layout/row_abi" />
+            <include layout="@layout/row_cpu_cores" />
+        </LinearLayout>
+
+        <LinearLayout style="@style/SectionCard" android:orientation="vertical">
+            <TextView style="@style/SectionTitle" android:text="@string/section_cpu" />
+            <include layout="@layout/row_cpu_state" />
+            <include layout="@layout/row_cpu_target" />
+            <include layout="@layout/row_app_cpu_load" />
+            <include layout="@layout/row_core_equivalent" />
+            <include layout="@layout/row_threads" />
+        </LinearLayout>
+
+        <LinearLayout style="@style/SectionCard" android:orientation="vertical">
+            <TextView style="@style/SectionTitle" android:text="@string/section_memory" />
+            <include layout="@layout/row_memory_state" />
+            <include layout="@layout/row_total_ram" />
+            <include layout="@layout/row_available_ram" />
+            <include layout="@layout/row_system_used" />
+            <include layout="@layout/row_app_pss" />
+            <include layout="@layout/row_native_pss" />
+            <include layout="@layout/row_stress_target" />
+            <include layout="@layout/row_allocated" />
+            <include layout="@layout/row_memory_activity" />
+        </LinearLayout>
+
+        <LinearLayout style="@style/SectionCard" android:orientation="vertical">
+            <TextView style="@style/SectionTitle" android:text="@string/section_thermal" />
+            <include layout="@layout/row_battery_temperature" />
+            <include layout="@layout/row_thermal_status" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/configurationPanel"
+            style="@style/SectionCard"
+            android:orientation="vertical">
+
+            <TextView style="@style/SectionTitle" android:text="@string/configuration" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/cpu_load"
+                android:textColor="@color/text_secondary"
+                android:textSize="13sp" />
+
+            <RadioGroup
+                android:id="@+id/cpuLoadGroup"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="12dp"
+                android:orientation="horizontal">
+
+                <RadioButton
+                    android:id="@+id/cpu25"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="@string/load_25"
+                    android:textColor="@color/text_primary" />
+
+                <RadioButton
+                    android:id="@+id/cpu50"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="@string/load_50"
+                    android:textColor="@color/text_primary" />
+
+                <RadioButton
+                    android:id="@+id/cpu75"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="@string/load_75"
+                    android:textColor="@color/text_primary" />
+
+                <RadioButton
+                    android:id="@+id/cpu100"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:checked="true"
+                    android:text="@string/load_100"
+                    android:textColor="@color/text_primary" />
+            </RadioGroup>
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/ram_target"
+                android:textColor="@color/text_secondary"
+                android:textSize="13sp" />
+
+            <RadioGroup
+                android:id="@+id/ramTargetGroup"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <RadioButton
+                    android:id="@+id/ram256"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="@string/ram_256"
+                    android:textColor="@color/text_primary" />
+
+                <RadioButton
+                    android:id="@+id/ram512"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:checked="true"
+                    android:text="@string/ram_512"
+                    android:textColor="@color/text_primary" />
+
+                <RadioButton
+                    android:id="@+id/ram1gb"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="@string/ram_1gb"
+                    android:textColor="@color/text_primary" />
+
+                <RadioButton
+                    android:id="@+id/ramAuto"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="@string/ram_auto"
+                    android:textColor="@color/text_primary" />
+            </RadioGroup>
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="16dp"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/startButton"
+                android:layout_width="0dp"
+                android:layout_height="52dp"
+                android:layout_marginEnd="6dp"
+                android:layout_weight="1"
+                android:background="@drawable/button_primary"
+                android:text="@string/start"
+                android:textColor="@color/text_primary"
+                android:textStyle="bold" />
+
+            <Button
+                android:id="@+id/stopButton"
+                android:layout_width="0dp"
+                android:layout_height="52dp"
+                android:layout_marginStart="6dp"
+                android:layout_weight="1"
+                android:background="@drawable/button_stop"
+                android:enabled="false"
+                android:text="@string/stop"
+                android:textColor="@color/text_primary"
+                android:textStyle="bold" />
+        </LinearLayout>
+    </LinearLayout>
+</ScrollView>
