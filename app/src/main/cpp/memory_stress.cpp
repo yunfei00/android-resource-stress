@@ -1,9 +1,10 @@
 #include "memory_stress.h"
 
 #include <android/log.h>
+#include <sys/mman.h>
+#include <sys/prctl.h>
 
 #include <algorithm>
-#include <cstdlib>
 #include <cstring>
 #include <new>
 #include <utility>
@@ -14,6 +15,14 @@ constexpr std::size_t kTouchStrideBytes = 4096U;
 constexpr std::size_t kCopyChunkBytes = 1024U * 1024U;
 constexpr std::int64_t kMaximumTargetBytes = 1536LL * 1024LL * 1024LL;
 constexpr char kLogTag[] = "ResourceStress";
+constexpr char kNativeMappingName[] = "libc_malloc";
+
+#ifndef PR_SET_VMA
+constexpr int PR_SET_VMA = 0x53564d41;
+#endif
+#ifndef PR_SET_VMA_ANON_NAME
+constexpr int PR_SET_VMA_ANON_NAME = 0;
+#endif
 }  // namespace
 
 MemoryStress::~MemoryStress() {
@@ -41,15 +50,34 @@ std::int64_t MemoryStress::start(std::int64_t targetBytes) {
     while (remainingBytes > 0 && !stopRequested_.load(std::memory_order_acquire)) {
         const std::size_t blockSize = static_cast<std::size_t>(
             std::min<std::int64_t>(remainingBytes, static_cast<std::int64_t>(kAllocationBlockBytes)));
-        auto* data = static_cast<std::uint8_t*>(std::malloc(blockSize));
-        if (data == nullptr) {
+        void* mapping = mmap(
+            nullptr,
+            blockSize,
+            PROT_READ | PROT_WRITE,
+            MAP_PRIVATE | MAP_ANONYMOUS,
+            -1,
+            0);
+        if (mapping == MAP_FAILED) {
             __android_log_print(
                 ANDROID_LOG_WARN,
                 kLogTag,
-                "Memory allocation stopped after %lld bytes",
+                "Memory mapping stopped after %lld bytes",
                 static_cast<long long>(allocatedBytes_.load(std::memory_order_relaxed)));
             break;
         }
+        if (prctl(
+                PR_SET_VMA,
+                PR_SET_VMA_ANON_NAME,
+                mapping,
+                blockSize,
+                kNativeMappingName) != 0) {
+            __android_log_print(
+                ANDROID_LOG_WARN,
+                kLogTag,
+                "Unable to classify %zu-byte stress mapping as native memory",
+                blockSize);
+        }
+        auto* data = static_cast<std::uint8_t*>(mapping);
 
         for (std::size_t offset = 0; offset < blockSize; offset += kTouchStrideBytes) {
             data[offset] = static_cast<std::uint8_t>((offset / kTouchStrideBytes) ^ blockSize);
@@ -62,20 +90,20 @@ std::int64_t MemoryStress::start(std::int64_t targetBytes) {
         }
 
         if (stopRequested_.load(std::memory_order_acquire)) {
-            std::free(data);
+            munmap(data, blockSize);
             break;
         }
 
         {
             std::lock_guard<std::mutex> lock(mutex_);
             if (!active_ || stopRequested_.load(std::memory_order_acquire)) {
-                std::free(data);
+                munmap(data, blockSize);
                 break;
             }
             try {
                 blocks_.push_back(Block{data, blockSize});
             } catch (...) {
-                std::free(data);
+                munmap(data, blockSize);
                 break;
             }
             allocatedBytes_.fetch_add(
@@ -191,7 +219,13 @@ void MemoryStress::workerLoop() {
 
 void MemoryStress::freeBlocksLocked() {
     for (const Block& block : blocks_) {
-        std::free(block.data);
+        if (munmap(block.data, block.size) != 0) {
+            __android_log_print(
+                ANDROID_LOG_ERROR,
+                kLogTag,
+                "munmap failed for %zu-byte stress block",
+                block.size);
+        }
     }
     blocks_.clear();
 }

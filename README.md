@@ -60,7 +60,7 @@ App CPU Load     = Core Equivalent / logical CPU core count
 
 ## Memory Stress
 
-内存按 8 MB 分块申请。每块申请后按 4 KB stride 写入，并触碰最后一个字节，使虚拟内存页实际提交。分配完成后，一个 native worker 持续按 1 MB chunk 执行读取、校验和、修改和 `memcpy` 回写。
+内存按 8 MB 分块创建 private anonymous mapping，并按 Android native heap 规则标记为 `libc_malloc`。每块映射后按 4 KB stride 写入，并触碰最后一个字节，使虚拟内存页实际提交；STOP 时使用 `munmap` 及时归还页面。分配完成后，一个 native worker 持续按 1 MB chunk 执行读取、校验和、修改和 `memcpy` 回写。
 
 `processedBytes` 记录累计处理量，界面使用相邻采样间的增量计算 Memory Activity。它是压力工作量观测值，不是内存跑分。
 

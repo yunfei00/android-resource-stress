@@ -3,7 +3,6 @@ package com.androidresourcestress
 import android.app.ActivityManager
 import android.content.Context
 import android.os.Debug
-import android.os.Process
 import android.os.SystemClock
 
 data class MemorySnapshot(
@@ -22,9 +21,8 @@ class MemoryMonitor(context: Context) {
     fun sample(): MemorySnapshot {
         val systemInfo = ActivityManager.MemoryInfo()
         activityManager.getMemoryInfo(systemInfo)
-        val processInfo = activityManager
-            .getProcessMemoryInfo(intArrayOf(Process.myPid()))
-            .firstOrNull() ?: Debug.MemoryInfo()
+        val processInfo = Debug.MemoryInfo()
+        Debug.getMemoryInfo(processInfo)
         val total = systemInfo.totalMem.coerceAtLeast(0L)
         val available = systemInfo.availMem.coerceAtLeast(0L)
         return MemorySnapshot(
