@@ -1,0 +1,176 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    style="@style/SectionCard"
+    android:orientation="vertical">
+
+    <TextView style="@style/SectionTitle" android:text="@string/section_gpu" />
+
+    <LinearLayout style="@style/MetricRow">
+        <TextView style="@style/MetricLabel" android:text="@string/label_gpu_device" />
+        <TextView android:id="@+id/gpuDeviceValue" style="@style/GpuMetricValue" android:text="@string/checking" />
+    </LinearLayout>
+
+    <LinearLayout style="@style/MetricRow">
+        <TextView style="@style/MetricLabel" android:text="@string/label_vulkan_version" />
+        <TextView android:id="@+id/gpuVulkanValue" style="@style/GpuMetricValue" android:text="@string/checking" />
+    </LinearLayout>
+
+    <LinearLayout style="@style/MetricRow">
+        <TextView style="@style/MetricLabel" android:text="@string/label_vendor_device" />
+        <TextView android:id="@+id/gpuVendorDeviceValue" style="@style/GpuMetricValue" android:text="@string/not_available" />
+    </LinearLayout>
+
+    <LinearLayout style="@style/MetricRow">
+        <TextView style="@style/MetricLabel" android:text="@string/label_compute_queue" />
+        <TextView android:id="@+id/gpuComputeValue" style="@style/GpuMetricValue" android:text="@string/checking" />
+    </LinearLayout>
+
+    <LinearLayout style="@style/MetricRow">
+        <TextView style="@style/MetricLabel" android:text="@string/label_max_group_count" />
+        <TextView android:id="@+id/gpuMaxWorkGroupCountValue" style="@style/GpuMetricValue" android:text="@string/not_available" />
+    </LinearLayout>
+
+    <LinearLayout style="@style/MetricRow">
+        <TextView style="@style/MetricLabel" android:text="@string/label_max_group_size" />
+        <TextView android:id="@+id/gpuMaxWorkGroupSizeValue" style="@style/GpuMetricValue" android:text="@string/not_available" />
+    </LinearLayout>
+
+    <LinearLayout style="@style/MetricRow">
+        <TextView style="@style/MetricLabel" android:text="@string/label_max_invocations" />
+        <TextView android:id="@+id/gpuMaxInvocationsValue" style="@style/GpuMetricValue" android:text="@string/not_available" />
+    </LinearLayout>
+
+    <LinearLayout style="@style/MetricRow">
+        <TextView style="@style/MetricLabel" android:text="@string/label_timestamp_query" />
+        <TextView android:id="@+id/gpuTimestampValue" style="@style/GpuMetricValue" android:text="@string/checking" />
+    </LinearLayout>
+
+    <LinearLayout style="@style/MetricRow">
+        <TextView style="@style/MetricLabel" android:text="@string/label_gpu_buffer" />
+        <TextView android:id="@+id/gpuBufferValue" style="@style/GpuMetricValue" android:text="@string/not_available" />
+    </LinearLayout>
+
+    <LinearLayout style="@style/MetricRow">
+        <TextView style="@style/MetricLabel" android:text="@string/label_gpu_target" />
+        <TextView android:id="@+id/gpuTargetValue" style="@style/GpuMetricValue" android:text="@string/load_100" />
+    </LinearLayout>
+
+    <LinearLayout style="@style/MetricRow">
+        <TextView style="@style/MetricLabel" android:text="@string/label_gpu_status" />
+        <TextView android:id="@+id/gpuStatusValue" style="@style/GpuMetricValue" android:text="@string/checking" />
+    </LinearLayout>
+
+    <LinearLayout style="@style/MetricRow">
+        <TextView style="@style/MetricLabel" android:text="@string/label_dispatch_count" />
+        <TextView android:id="@+id/gpuDispatchCountValue" style="@style/GpuMetricValue" android:text="0" />
+    </LinearLayout>
+
+    <LinearLayout style="@style/MetricRow">
+        <TextView style="@style/MetricLabel" android:text="@string/label_dispatch_rate" />
+        <TextView android:id="@+id/gpuDispatchRateValue" style="@style/GpuMetricValue" android:text="0 dispatch/s" />
+    </LinearLayout>
+
+    <LinearLayout style="@style/MetricRow">
+        <TextView style="@style/MetricLabel" android:text="@string/label_gpu_work_time" />
+        <TextView android:id="@+id/gpuWorkTimeValue" style="@style/GpuMetricValue" android:text="@string/checking" />
+    </LinearLayout>
+
+    <LinearLayout style="@style/MetricRow">
+        <TextView style="@style/MetricLabel" android:text="@string/label_compute_activity" />
+        <TextView android:id="@+id/gpuComputeActivityValue" style="@style/GpuMetricValue" android:text="0 groups/s" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal">
+        <TextView style="@style/MetricLabel" android:text="@string/label_output_checksum" />
+        <TextView android:id="@+id/gpuOutputValue" style="@style/GpuMetricValue" android:text="@string/waiting" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/gpuConfigurationPanel"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="14dp"
+        android:orientation="vertical">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/gpu_workload_level"
+            android:textColor="@color/text_secondary"
+            android:textSize="13sp" />
+
+        <RadioGroup
+            android:id="@+id/gpuLoadGroup"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="12dp"
+            android:orientation="horizontal">
+
+            <RadioButton
+                android:id="@+id/gpu25"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/load_25"
+                android:textColor="@color/text_primary" />
+
+            <RadioButton
+                android:id="@+id/gpu50"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/load_50"
+                android:textColor="@color/text_primary" />
+
+            <RadioButton
+                android:id="@+id/gpu75"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/load_75"
+                android:textColor="@color/text_primary" />
+
+            <RadioButton
+                android:id="@+id/gpu100"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:checked="true"
+                android:text="@string/load_100"
+                android:textColor="@color/text_primary" />
+        </RadioGroup>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/startGpuButton"
+                android:layout_width="0dp"
+                android:layout_height="52dp"
+                android:layout_marginEnd="6dp"
+                android:layout_weight="1"
+                android:background="@drawable/button_primary"
+                android:enabled="false"
+                android:text="@string/start_gpu"
+                android:textColor="@color/text_primary"
+                android:textStyle="bold" />
+
+            <Button
+                android:id="@+id/stopGpuButton"
+                android:layout_width="0dp"
+                android:layout_height="52dp"
+                android:layout_marginStart="6dp"
+                android:layout_weight="1"
+                android:background="@drawable/button_stop"
+                android:enabled="false"
+                android:text="@string/stop_gpu"
+                android:textColor="@color/text_primary"
+                android:textStyle="bold" />
+        </LinearLayout>
+    </LinearLayout>
+</LinearLayout>

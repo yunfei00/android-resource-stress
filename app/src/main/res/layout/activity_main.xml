@@ -89,6 +89,8 @@
             <include layout="@layout/row_memory_activity" />
         </LinearLayout>
 
+        <include layout="@layout/gpu_section" />
+
         <LinearLayout style="@style/SectionCard" android:orientation="vertical">
             <TextView style="@style/SectionTitle" android:text="@string/section_thermal" />
             <include layout="@layout/row_battery_temperature" />
@@ -211,7 +213,7 @@
                 android:layout_marginEnd="6dp"
                 android:layout_weight="1"
                 android:background="@drawable/button_primary"
-                android:text="@string/start"
+                android:text="@string/start_cpu_memory"
                 android:textColor="@color/text_primary"
                 android:textStyle="bold" />
 
@@ -223,7 +225,7 @@
                 android:layout_weight="1"
                 android:background="@drawable/button_stop"
                 android:enabled="false"
-                android:text="@string/stop"
+                android:text="@string/stop_all"
                 android:textColor="@color/text_primary"
                 android:textStyle="bold" />
         </LinearLayout>

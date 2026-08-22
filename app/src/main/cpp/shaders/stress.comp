@@ -1,0 +1,25 @@
+#version 450
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+layout(set = 0, binding = 0, std430) buffer StressBuffer {
+    vec4 values[];
+} stressBuffer;
+
+void main() {
+    const uint index = gl_GlobalInvocationID.x;
+    vec4 value = stressBuffer.values[index];
+    const vec4 laneBias = vec4(0.1031, 0.11369, 0.13787, 0.09987);
+
+    for (uint iteration = 0; iteration < 8; ++iteration) {
+        const vec4 rotated = value.yzwx;
+        const vec4 scale = vec4(1.00013, 0.99991, 1.00007, 0.99987) +
+            vec4(float(iteration)) * 0.000003;
+        value = fma(value, scale, rotated * laneBias + vec4(0.017 * float(iteration + 1)));
+        const float coupled = dot(value, value.wxyz) * 0.00003125;
+        value = fract(abs(value + vec4(coupled))) * 2.0 - 1.0;
+        value = fma(value.zwxy, value.yxwz + vec4(1.001), value * 0.731);
+    }
+
+    stressBuffer.values[index] = value + laneBias * 0.0001;
+}
