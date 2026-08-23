@@ -1,6 +1,8 @@
 package com.androidresourcestress
 
 import android.app.Activity
+import android.app.AlertDialog
+import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -43,6 +45,14 @@ class MainActivity : Activity(), CombinedStressController.Listener {
     private lateinit var stressTargetValue: TextView
     private lateinit var allocatedValue: TextView
     private lateinit var memoryActivityValue: TextView
+    private lateinit var storageStatusValue: TextView
+    private lateinit var storageModeValue: TextView
+    private lateinit var storageWorkingSetValue: TextView
+    private lateinit var storageBytesWrittenValue: TextView
+    private lateinit var storageBytesReadValue: TextView
+    private lateinit var storageWriteActivityValue: TextView
+    private lateinit var storageReadActivityValue: TextView
+    private lateinit var storageTempFileValue: TextView
     private lateinit var gpuDeviceValue: TextView
     private lateinit var gpuVulkanValue: TextView
     private lateinit var gpuComputeValue: TextView
@@ -68,11 +78,22 @@ class MainActivity : Activity(), CombinedStressController.Listener {
     private lateinit var resourceCpu: CheckBox
     private lateinit var resourceGpu: CheckBox
     private lateinit var resourceMemory: CheckBox
+    private lateinit var resourceStorage: CheckBox
+    private lateinit var storageModeGroup: RadioGroup
+    private lateinit var storageLevelGroup: RadioGroup
     private lateinit var durationSpinner: Spinner
     private lateinit var startButton: Button
     private lateinit var stopButton: Button
+    private lateinit var resultSummaryValue: TextView
+    private lateinit var exportResultButton: Button
 
     private lateinit var controller: CombinedStressController
+    private lateinit var preferences: AppPreferences
+    private lateinit var historyStore: SessionHistoryStore
+    private lateinit var diagnosticLog: DiagnosticLog
+    private lateinit var resultExporter: ResultExporter
+    private lateinit var deviceMonitor: DeviceMonitor
+    private lateinit var deviceInfo: DeviceInfo
     private val monitorHandler = Handler(Looper.getMainLooper())
     private val durations = StressDuration.entries.toTypedArray()
     private var monitoring = false
@@ -96,16 +117,41 @@ class MainActivity : Activity(), CombinedStressController.Listener {
         installSystemBarInsets()
         bindViews()
 
-        val deviceMonitor = DeviceMonitor(this)
-        val deviceInfo = deviceMonitor.deviceInfo()
+        preferences = AppPreferences(this)
+        historyStore = SessionHistoryStore(this)
+        diagnosticLog = DiagnosticLog(this)
+        diagnosticLog.record("App started version=${BuildConfig.VERSION_NAME}")
+        resultExporter = ResultExporter(this)
+        deviceMonitor = DeviceMonitor(this)
+        deviceInfo = deviceMonitor.deviceInfo()
         renderDeviceInfo(deviceInfo)
         controller = CombinedStressController(this, deviceInfo.logicalCoreCount, this)
 
         installConfigurationListeners()
         configureDurationSpinner()
-        applyPreset(StressPreset.EXTREME)
+        applyConfiguration(preferences.loadConfiguration())
         startButton.setOnClickListener { startSession() }
         stopButton.setOnClickListener { controller.stopAll(StopReason.USER) }
+        findViewById<Button>(R.id.historyButton).setOnClickListener {
+            startActivity(Intent(this, HistoryActivity::class.java))
+        }
+        findViewById<Button>(R.id.deviceInfoButton).setOnClickListener {
+            startActivity(Intent(this, DeviceInfoActivity::class.java))
+        }
+        findViewById<Button>(R.id.settingsButton).setOnClickListener {
+            startActivity(Intent(this, SettingsActivity::class.java))
+        }
+        exportResultButton.setOnClickListener { exportMostRecentResult() }
+        findViewById<Button>(R.id.exportDiagnosticButton).setOnClickListener {
+            runCatching {
+                resultExporter.share(
+                    diagnosticLog.export(),
+                    "text/plain",
+                    getString(R.string.share_diagnostics),
+                )
+            }.onFailure { onCombinedError(it.message ?: "Unable to export diagnostics") }
+        }
+        renderRecentResult(historyStore.list().firstOrNull())
         renderState(CombinedStressState.IDLE)
 
         if (nativeLoadError == null) {
@@ -125,6 +171,14 @@ class MainActivity : Activity(), CombinedStressController.Listener {
         monitoring = true
         monitorHandler.removeCallbacks(monitorRunnable)
         monitorHandler.post(monitorRunnable)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (::controller.isInitialized && controller.state == CombinedStressState.IDLE) {
+            applyConfiguration(preferences.loadConfiguration())
+            renderRecentResult(historyStore.list().firstOrNull())
+        }
     }
 
     override fun onStop() {
@@ -159,6 +213,7 @@ class MainActivity : Activity(), CombinedStressController.Listener {
 
     override fun onSessionFinished(session: StressSessionSnapshot) {
         renderSession(session, session)
+        renderRecentResult(session)
     }
 
     override fun onCombinedError(message: String) {
@@ -188,6 +243,14 @@ class MainActivity : Activity(), CombinedStressController.Listener {
         stressTargetValue = findViewById(R.id.stressTargetValue)
         allocatedValue = findViewById(R.id.allocatedValue)
         memoryActivityValue = findViewById(R.id.memoryActivityValue)
+        storageStatusValue = findViewById(R.id.storageStatusValue)
+        storageModeValue = findViewById(R.id.storageModeValue)
+        storageWorkingSetValue = findViewById(R.id.storageWorkingSetValue)
+        storageBytesWrittenValue = findViewById(R.id.storageBytesWrittenValue)
+        storageBytesReadValue = findViewById(R.id.storageBytesReadValue)
+        storageWriteActivityValue = findViewById(R.id.storageWriteActivityValue)
+        storageReadActivityValue = findViewById(R.id.storageReadActivityValue)
+        storageTempFileValue = findViewById(R.id.storageTempFileValue)
         gpuDeviceValue = findViewById(R.id.gpuDeviceValue)
         gpuVulkanValue = findViewById(R.id.gpuVulkanValue)
         gpuComputeValue = findViewById(R.id.gpuComputeValue)
@@ -210,12 +273,17 @@ class MainActivity : Activity(), CombinedStressController.Listener {
         cpuLoadGroup = findViewById(R.id.cpuLoadGroup)
         gpuLoadGroup = findViewById(R.id.gpuLoadGroup)
         ramTargetGroup = findViewById(R.id.ramTargetGroup)
+        storageModeGroup = findViewById(R.id.storageModeGroup)
+        storageLevelGroup = findViewById(R.id.storageLevelGroup)
         resourceCpu = findViewById(R.id.resourceCpu)
         resourceGpu = findViewById(R.id.resourceGpu)
         resourceMemory = findViewById(R.id.resourceMemory)
+        resourceStorage = findViewById(R.id.resourceStorage)
         durationSpinner = findViewById(R.id.durationSpinner)
         startButton = findViewById(R.id.startButton)
         stopButton = findViewById(R.id.stopButton)
+        resultSummaryValue = findViewById(R.id.resultSummaryValue)
+        exportResultButton = findViewById(R.id.exportResultButton)
     }
 
     private fun installSystemBarInsets() {
@@ -252,10 +320,33 @@ class MainActivity : Activity(), CombinedStressController.Listener {
         cpuLoadGroup.setOnCheckedChangeListener(manualGroupListener)
         gpuLoadGroup.setOnCheckedChangeListener(manualGroupListener)
         ramTargetGroup.setOnCheckedChangeListener(manualGroupListener)
+        storageModeGroup.setOnCheckedChangeListener(manualGroupListener)
+        storageLevelGroup.setOnCheckedChangeListener(manualGroupListener)
         val resourceListener = View.OnClickListener { markCustomPreset() }
         resourceCpu.setOnClickListener(resourceListener)
         resourceGpu.setOnClickListener(resourceListener)
         resourceMemory.setOnClickListener(resourceListener)
+        resourceStorage.setOnClickListener {
+            if (resourceStorage.isChecked && preferences.confirmStorageStress) {
+                resourceStorage.isChecked = false
+                AlertDialog.Builder(this)
+                    .setTitle(R.string.storage_warning_title)
+                    .setMessage(R.string.storage_warning_message)
+                    .setPositiveButton(R.string.enable) { _, _ ->
+                        resourceStorage.isChecked = true
+                        markCustomPreset()
+                    }
+                    .setNeutralButton(R.string.enable_dont_ask) { _, _ ->
+                        preferences.confirmStorageStress = false
+                        resourceStorage.isChecked = true
+                        markCustomPreset()
+                    }
+                    .setNegativeButton(R.string.cancel) { _, _ -> markCustomPreset() }
+                    .show()
+            } else {
+                markCustomPreset()
+            }
+        }
     }
 
     private fun configureDurationSpinner() {
@@ -289,6 +380,7 @@ class MainActivity : Activity(), CombinedStressController.Listener {
         resourceCpu.isChecked = true
         resourceGpu.isChecked = true
         resourceMemory.isChecked = true
+        resourceStorage.isChecked = false
         when (preset) {
             StressPreset.BALANCED -> {
                 cpuLoadGroup.check(R.id.cpu50)
@@ -311,6 +403,64 @@ class MainActivity : Activity(), CombinedStressController.Listener {
         renderConfigurationPreview()
     }
 
+    private fun applyConfiguration(configuration: CombinedStressConfiguration) {
+        if (!::durationSpinner.isInitialized || durationSpinner.adapter == null) return
+        applyingPreset = true
+        presetGroup.check(
+            when (configuration.preset) {
+                StressPreset.BALANCED -> R.id.presetBalanced
+                StressPreset.HIGH -> R.id.presetHigh
+                StressPreset.EXTREME -> R.id.presetExtreme
+                StressPreset.CUSTOM -> R.id.presetCustom
+            },
+        )
+        resourceCpu.isChecked = configuration.cpuEnabled
+        resourceGpu.isChecked = configuration.gpuEnabled
+        resourceMemory.isChecked = configuration.memoryEnabled
+        resourceStorage.isChecked = configuration.storageEnabled
+        cpuLoadGroup.check(
+            when (configuration.cpuTargetPercent) {
+                25 -> R.id.cpu25
+                50 -> R.id.cpu50
+                75 -> R.id.cpu75
+                else -> R.id.cpu100
+            },
+        )
+        gpuLoadGroup.check(
+            when (configuration.gpuTargetPercent) {
+                25 -> R.id.gpu25
+                50 -> R.id.gpu50
+                75 -> R.id.gpu75
+                else -> R.id.gpu100
+            },
+        )
+        ramTargetGroup.check(
+            when (configuration.memoryTarget) {
+                MemoryTarget.MIB_256 -> R.id.ram256
+                MemoryTarget.MIB_512 -> R.id.ram512
+                MemoryTarget.GIB_1 -> R.id.ram1gb
+                MemoryTarget.AUTO -> R.id.ramAuto
+            },
+        )
+        storageModeGroup.check(
+            when (configuration.storageMode) {
+                StorageMode.READ -> R.id.storageRead
+                StorageMode.WRITE -> R.id.storageWrite
+                StorageMode.MIXED -> R.id.storageMixed
+            },
+        )
+        storageLevelGroup.check(
+            when (configuration.storageLevel) {
+                StorageLevel.LOW -> R.id.storageLow
+                StorageLevel.MEDIUM -> R.id.storageMedium
+                StorageLevel.HIGH -> R.id.storageHigh
+            },
+        )
+        durationSpinner.setSelection(durations.indexOf(configuration.duration).coerceAtLeast(0))
+        applyingPreset = false
+        renderConfigurationPreview()
+    }
+
     private fun markCustomPreset() {
         if (applyingPreset) return
         applyingPreset = true
@@ -321,7 +471,9 @@ class MainActivity : Activity(), CombinedStressController.Listener {
 
     private fun startSession() {
         if (!nativeAvailable || controller.state != CombinedStressState.IDLE) return
-        if (!resourceCpu.isChecked && !resourceGpu.isChecked && !resourceMemory.isChecked) {
+        if (!resourceCpu.isChecked && !resourceGpu.isChecked && !resourceMemory.isChecked &&
+            !resourceStorage.isChecked
+        ) {
             Toast.makeText(this, R.string.select_resource, Toast.LENGTH_LONG).show()
             return
         }
@@ -334,9 +486,12 @@ class MainActivity : Activity(), CombinedStressController.Listener {
             cpuEnabled = resourceCpu.isChecked,
             gpuEnabled = resourceGpu.isChecked,
             memoryEnabled = resourceMemory.isChecked,
+            storageEnabled = resourceStorage.isChecked,
             cpuTargetPercent = selectedCpuTarget(),
             gpuTargetPercent = selectedGpuTarget(),
             memoryTarget = selectedMemoryTarget(),
+            storageMode = selectedStorageMode(),
+            storageLevel = selectedStorageLevel(),
             duration = durations.getOrElse(durationSpinner.selectedItemPosition) {
                 StressDuration.MINUTES_5
             },
@@ -370,6 +525,20 @@ class MainActivity : Activity(), CombinedStressController.Listener {
         else -> MemoryTarget.AUTO
     }
 
+    private fun selectedStorageMode(): StorageMode = when (storageModeGroup.checkedRadioButtonId) {
+        R.id.storageRead -> StorageMode.READ
+        R.id.storageWrite -> StorageMode.WRITE
+        else -> StorageMode.MIXED
+    }
+
+    private fun selectedStorageLevel(): StorageLevel = when (
+        storageLevelGroup.checkedRadioButtonId
+    ) {
+        R.id.storageMedium -> StorageLevel.MEDIUM
+        R.id.storageHigh -> StorageLevel.HIGH
+        else -> StorageLevel.LOW
+    }
+
     private fun updateLiveMetrics() {
         val snapshot = controller.runtimeSnapshot()
         lastSnapshot = snapshot
@@ -390,6 +559,27 @@ class MainActivity : Activity(), CombinedStressController.Listener {
         nativePssValue.text = ByteFormatter.formatBytes(snapshot.memory.nativePssBytes)
         allocatedValue.text = ByteFormatter.formatBytes(snapshot.allocatedMemoryBytes)
         memoryActivityValue.text = ByteFormatter.formatRate(snapshot.memoryActivityBytesPerSecond)
+
+        storageStatusValue.text = if (
+            snapshot.currentSession?.configuration?.storageEnabled == false &&
+            snapshot.storage.status == StorageStressStatus.STOPPED
+        ) {
+            "OFF"
+        } else {
+            snapshot.storage.status.name
+        }
+        storageModeValue.text = snapshot.storage.mode.name
+        storageWorkingSetValue.text = ByteFormatter.formatBytes(snapshot.storage.workingSetBytes)
+        storageBytesWrittenValue.text = ByteFormatter.formatBytes(snapshot.storage.bytesWritten)
+        storageBytesReadValue.text = ByteFormatter.formatBytes(snapshot.storage.bytesRead)
+        storageWriteActivityValue.text = ByteFormatter.formatRate(
+            snapshot.storage.writeActivityBytesPerSecond,
+        )
+        storageReadActivityValue.text = ByteFormatter.formatRate(
+            snapshot.storage.readActivityBytesPerSecond,
+        )
+        storageTempFileValue.text = ByteFormatter.formatBytes(snapshot.storage.temporaryFileBytes)
+        storageStatusValue.setTextColor(resourceColor(storageStatusValue.text.toString()))
 
         gpuDispatchCountValue.text = snapshot.gpu.dispatchCount.toString()
         gpuDispatchRateValue.text = GpuMetricsFormatter.formatDispatchRate(snapshot.gpuDispatchRate)
@@ -519,6 +709,7 @@ class MainActivity : Activity(), CombinedStressController.Listener {
             )
         } ?: getString(R.string.waiting)
         lastErrorValue.text = session?.lastError ?: controller.lastError ?: getString(R.string.none)
+        if (current == null) renderRecentResult(last)
     }
 
     private fun renderConfigurationPreview() {
@@ -532,10 +723,11 @@ class MainActivity : Activity(), CombinedStressController.Listener {
             gpuTargetValue.text = "${configuration.gpuTargetPercent}%"
             stressTargetValue.text = formatMemoryTarget(configuration.memoryTarget, availableBytes)
         }
+        if (!applyingPreset) preferences.saveConfiguration(configuration)
         startButton.setText(
             if (configuration.preset == StressPreset.EXTREME &&
                 configuration.cpuEnabled && configuration.gpuEnabled &&
-                configuration.memoryEnabled
+                configuration.memoryEnabled && !configuration.storageEnabled
             ) {
                 R.string.start_extreme
             } else {
@@ -557,7 +749,7 @@ class MainActivity : Activity(), CombinedStressController.Listener {
                 CombinedStressState.IDLE -> getColor(R.color.text_secondary)
             },
         )
-        if (state == CombinedStressState.RUNNING) {
+        if (state == CombinedStressState.RUNNING && preferences.keepScreenOnWhileRunning) {
             window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         } else {
             window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -579,6 +771,29 @@ class MainActivity : Activity(), CombinedStressController.Listener {
                 setEnabledRecursively(view.getChildAt(index), enabled)
             }
         }
+    }
+
+    private fun renderRecentResult(session: StressSessionSnapshot?) {
+        resultSummaryValue.text = session?.let(SessionResultFormatter::detailed)
+            ?: getString(R.string.no_results)
+        exportResultButton.isEnabled = session != null
+    }
+
+    private fun exportMostRecentResult() {
+        val session = lastSnapshot?.lastSession ?: historyStore.list().firstOrNull()
+        if (session == null) {
+            Toast.makeText(this, R.string.no_results, Toast.LENGTH_SHORT).show()
+            return
+        }
+        runCatching {
+            val file = resultExporter.exportSession(
+                session = session,
+                deviceInfo = deviceInfo,
+                storageCapacity = deviceMonitor.storageCapacity(),
+                gpuInfo = controller.gpuInfo,
+            )
+            resultExporter.share(file, "application/json", getString(R.string.share_result))
+        }.onFailure { onCombinedError(it.message ?: "Unable to export result") }
     }
 
     private fun formatMemoryTarget(target: MemoryTarget, availableBytes: Long): String {
@@ -620,7 +835,7 @@ class MainActivity : Activity(), CombinedStressController.Listener {
     private fun Long.floorToMib(): Long = this / MIB * MIB
 
     companion object {
-        private const val MONITOR_INTERVAL_MS = 1_250L
+        private const val MONITOR_INTERVAL_MS = 1_000L
         private const val MIB = 1024L * 1024L
         private const val MAX_AUTO_TARGET_BYTES = 1536L * MIB
     }

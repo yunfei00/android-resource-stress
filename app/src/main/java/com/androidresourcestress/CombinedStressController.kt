@@ -37,6 +37,13 @@ class CombinedStressController(
         var peakNativePssBytes: Long = 0L,
         var peakMemoryActivityBytesPerSecond: Double = 0.0,
         var peakDispatchRate: Double = 0.0,
+        var gpuWorkTimeTotalNanos: Double = 0.0,
+        var gpuWorkTimeSampleCount: Long = 0L,
+        var storageWorkingSetBytes: Long = 0L,
+        var storageBytesRead: Long = 0L,
+        var storageBytesWritten: Long = 0L,
+        var peakStorageReadActivityBytesPerSecond: Double = 0.0,
+        var peakStorageWriteActivityBytesPerSecond: Double = 0.0,
         val startBatteryTemperatureCelsius: Double?,
         var peakBatteryTemperatureCelsius: Double?,
         var highestThermalStatus: Int,
@@ -56,6 +63,18 @@ class CombinedStressController(
             peakNativePssBytes = peakNativePssBytes,
             peakMemoryActivityBytesPerSecond = peakMemoryActivityBytesPerSecond,
             peakDispatchRate = peakDispatchRate,
+            averageGpuWorkTimeNanos = if (gpuWorkTimeSampleCount > 0L) {
+                gpuWorkTimeTotalNanos / gpuWorkTimeSampleCount
+            } else {
+                0.0
+            },
+            storageWorkingSetBytes = storageWorkingSetBytes,
+            storageBytesRead = storageBytesRead,
+            storageBytesWritten = storageBytesWritten,
+            peakStorageReadActivityBytesPerSecond =
+                peakStorageReadActivityBytesPerSecond,
+            peakStorageWriteActivityBytesPerSecond =
+                peakStorageWriteActivityBytesPerSecond,
             startBatteryTemperatureCelsius = startBatteryTemperatureCelsius,
             peakBatteryTemperatureCelsius = peakBatteryTemperatureCelsius,
             highestThermalStatus = highestThermalStatus,
@@ -77,9 +96,14 @@ class CombinedStressController(
     private val cpuMonitor = CpuMonitor(logicalCoreCount)
     private val memoryActivityMonitor = MemoryActivityMonitor()
     private val gpuActivityMonitor = GpuActivityMonitor()
+    private val diagnosticLog = DiagnosticLog(context.applicationContext)
+    private val historyStore = SessionHistoryStore(context.applicationContext)
+    private val preferences = AppPreferences(context.applicationContext)
+    private val storageStress = StorageStress(context.applicationContext) { event ->
+        logInfo(event)
+    }
     private var listener: Listener? = listener
     private var generation = 0L
-    private var nextSessionId = 1L
     private var closed = false
     private var currentSession: MutableSession? = null
     private var lastSession: StressSessionSnapshot? = null
@@ -168,6 +192,7 @@ class CombinedStressController(
         }
         val gpu = nativeGpuSnapshot()
         val gpuActivity = synchronized(metricsLock) { gpuActivityMonitor.sample(gpu) }
+        val storage = storageStress.snapshot()
         val thermal = runCatching { deviceMonitor.thermalSnapshot() }
             .getOrElse { ThermalSnapshot(null, PowerManager.THERMAL_STATUS_NONE) }
         val now = SystemClock.elapsedRealtime()
@@ -195,6 +220,23 @@ class CombinedStressController(
                     session.peakDispatchRate,
                     gpuActivity.dispatchesPerSecond,
                 )
+                if (gpu.status == GpuNativeStatus.RUNNING && gpu.gpuWorkNanos > 0L) {
+                    session.gpuWorkTimeTotalNanos += gpu.gpuWorkNanos.toDouble()
+                    session.gpuWorkTimeSampleCount += 1L
+                }
+                session.storageBytesRead = max(session.storageBytesRead, storage.bytesRead)
+                session.storageBytesWritten = max(
+                    session.storageBytesWritten,
+                    storage.bytesWritten,
+                )
+                session.peakStorageReadActivityBytesPerSecond = max(
+                    session.peakStorageReadActivityBytesPerSecond,
+                    storage.readActivityBytesPerSecond,
+                )
+                session.peakStorageWriteActivityBytesPerSecond = max(
+                    session.peakStorageWriteActivityBytesPerSecond,
+                    storage.writeActivityBytesPerSecond,
+                )
                 session.highestThermalStatus = max(session.highestThermalStatus, thermal.status)
                 thermal.batteryTemperatureCelsius?.let { temperature ->
                     session.peakBatteryTemperatureCelsius = max(
@@ -207,7 +249,7 @@ class CombinedStressController(
                     thermal.status >= PowerManager.THERMAL_STATUS_MODERATE
                 ) {
                     moderateLoggedForSession = true
-                    Log.w(LOG_TAG, "Thermal ${thermal.statusLabel}: Device is warming up")
+                    logWarning("Thermal ${thermal.statusLabel}: Device is warming up")
                 }
 
                 if (state == CombinedStressState.RUNNING) {
@@ -216,6 +258,7 @@ class CombinedStressController(
                         cpuThreads,
                         allocated,
                         gpu,
+                        storage,
                     )
                     thermalStop = thermal.isSevereOrHigher
                     durationStop = session.configuration.duration.durationMs > 0L &&
@@ -256,6 +299,7 @@ class CombinedStressController(
             } else {
                 0.0
             },
+            storage = storage,
             thermal = thermal,
             lastError = lastError,
         )
@@ -280,9 +324,10 @@ class CombinedStressController(
             } else {
                 0L
             }
+            val startWallTimeMs = System.currentTimeMillis()
             val session = MutableSession(
-                sessionId = synchronized(lock) { nextSessionId++ },
-                startWallTimeMs = System.currentTimeMillis(),
+                sessionId = startWallTimeMs,
+                startWallTimeMs = startWallTimeMs,
                 startElapsedTimeMs = SystemClock.elapsedRealtime(),
                 configuration = configuration,
                 resolvedMemoryTargetBytes = resolvedMemoryTarget,
@@ -295,12 +340,13 @@ class CombinedStressController(
                 ensureStartActive(operationGeneration)
                 currentSession = session
             }
-            Log.i(
-                LOG_TAG,
+            logInfo(
                 "StressSession START preset=${configuration.preset} " +
                     "cpu=${configuration.cpuEnabled}/${configuration.cpuTargetPercent}% " +
                     "gpu=${configuration.gpuEnabled}/${configuration.gpuTargetPercent}% " +
                     "memory=${configuration.memoryEnabled}/$resolvedMemoryTarget " +
+                    "storage=${configuration.storageEnabled}/" +
+                    "${configuration.storageMode}/${configuration.storageLevel} " +
                     "duration=${configuration.duration}",
             )
 
@@ -320,7 +366,23 @@ class CombinedStressController(
                     throw IllegalStateException("Memory stress worker did not enter RUNNING")
                 }
                 session.allocatedMemoryBytes = allocated
-                Log.i(LOG_TAG, "Memory started: allocated=$allocated target=$resolvedMemoryTarget")
+                logInfo("Memory started: allocated=$allocated target=$resolvedMemoryTarget")
+                ensureStartActive(operationGeneration)
+            }
+
+            if (configuration.storageEnabled) {
+                val workingSet = storageStress.start(
+                    configuration.storageMode,
+                    configuration.storageLevel,
+                )
+                if (workingSet <= 0L || !storageStress.isRunning()) {
+                    throw IllegalStateException("Storage stress worker did not enter RUNNING")
+                }
+                session.storageWorkingSetBytes = workingSet
+                logInfo(
+                    "Storage started: mode=${configuration.storageMode} " +
+                        "level=${configuration.storageLevel} workingSet=$workingSet",
+                )
                 ensureStartActive(operationGeneration)
             }
 
@@ -340,7 +402,7 @@ class CombinedStressController(
                 ) {
                     throw IllegalStateException(nativeGpuError("GPU worker did not enter RUNNING"))
                 }
-                Log.i(LOG_TAG, "GPU started: target=${configuration.gpuTargetPercent}%")
+                logInfo("GPU started: target=${configuration.gpuTargetPercent}%")
                 ensureStartActive(operationGeneration)
             }
 
@@ -351,8 +413,7 @@ class CombinedStressController(
                 if (NativeStress.getCpuStressThreadCount() <= 0) {
                     throw IllegalStateException("CPU workers did not enter RUNNING")
                 }
-                Log.i(
-                    LOG_TAG,
+                logInfo(
                     "CPU started: threads=$logicalCoreCount target=${configuration.cpuTargetPercent}%",
                 )
                 ensureStartActive(operationGeneration)
@@ -393,7 +454,7 @@ class CombinedStressController(
         }
         cleanupNativeResources()
         if (!shouldHandle) return
-        Log.e(LOG_TAG, "StressSession ERROR: $message")
+        logError("StressSession ERROR: $message")
         postState(CombinedStressState.ERROR)
         postToMain { listener?.onCombinedError(message) }
         finishCurrentSession(StopReason.RESOURCE_ERROR, message)
@@ -416,7 +477,7 @@ class CombinedStressController(
             }
         }
         if (!changed) return
-        Log.e(LOG_TAG, "Thermal $statusLabel: stopping all stress resources")
+        logError("Thermal $statusLabel: stopping all stress resources")
         postState(CombinedStressState.THERMAL_LIMITED)
         stopAll(StopReason.THERMAL)
     }
@@ -435,7 +496,7 @@ class CombinedStressController(
             }
         }
         if (!changed) return
-        Log.e(LOG_TAG, "Runtime resource error: $message")
+        logError("Runtime resource error: $message")
         postState(CombinedStressState.ERROR)
         postToMain { listener?.onCombinedError(message) }
         executor.execute {
@@ -453,7 +514,7 @@ class CombinedStressController(
 
     private fun validateConfiguration(configuration: CombinedStressConfiguration) {
         if (!configuration.cpuEnabled && !configuration.gpuEnabled &&
-            !configuration.memoryEnabled
+            !configuration.memoryEnabled && !configuration.storageEnabled
         ) {
             throw IllegalArgumentException("Select at least one stress resource")
         }
@@ -491,6 +552,7 @@ class CombinedStressController(
         cpuThreads: Int,
         allocatedMemoryBytes: Long,
         gpu: GpuSnapshot,
+        storage: StorageRuntimeSnapshot,
     ): String? = when {
         configuration.cpuEnabled && cpuThreads <= 0 -> "CPU stress worker stopped unexpectedly"
         configuration.memoryEnabled && allocatedMemoryBytes <= 0L ->
@@ -501,6 +563,10 @@ class CombinedStressController(
             nativeGpuError("GPU worker stopped after a Vulkan error")
         configuration.gpuEnabled && gpu.status != GpuNativeStatus.RUNNING ->
             "GPU stress worker stopped unexpectedly"
+        configuration.storageEnabled && storage.status == StorageStressStatus.ERROR ->
+            storage.lastError ?: "Storage stress worker stopped after an I/O error"
+        configuration.storageEnabled && !storageStress.isRunning() ->
+            "Storage stress worker stopped unexpectedly"
         else -> null
     }
 
@@ -508,6 +574,33 @@ class CombinedStressController(
         runCatching { NativeStress.stopCpuStress() }
         runCatching { NativeStress.stopGpuStress() }
         runCatching { NativeStress.stopMemoryStress() }
+        val finalStorage = runCatching { storageStress.stop() }.getOrNull()
+        if (finalStorage != null) {
+            synchronized(lock) {
+                currentSession?.let { session ->
+                    session.storageWorkingSetBytes = max(
+                        session.storageWorkingSetBytes,
+                        finalStorage.workingSetBytes,
+                    )
+                    session.storageBytesRead = max(
+                        session.storageBytesRead,
+                        finalStorage.bytesRead,
+                    )
+                    session.storageBytesWritten = max(
+                        session.storageBytesWritten,
+                        finalStorage.bytesWritten,
+                    )
+                    session.peakStorageReadActivityBytesPerSecond = max(
+                        session.peakStorageReadActivityBytesPerSecond,
+                        finalStorage.readActivityBytesPerSecond,
+                    )
+                    session.peakStorageWriteActivityBytesPerSecond = max(
+                        session.peakStorageWriteActivityBytesPerSecond,
+                        finalStorage.writeActivityBytesPerSecond,
+                    )
+                }
+            }
+        }
     }
 
     private fun finishCurrentSession(reason: StopReason, error: String? = null) {
@@ -520,8 +613,9 @@ class CombinedStressController(
             lastSession = snapshot
             snapshot
         } ?: return
-        Log.i(
-            LOG_TAG,
+        runCatching { historyStore.add(finished, preferences.historyLimit) }
+            .onFailure { logError("History persistence failed: ${it.message}") }
+        logInfo(
             "StressSession STOP reason=${finished.stopReason} " +
                 "elapsed=${finished.elapsedTimeMs}ms " +
                 "peakCpu=${finished.peakCpuLoadPercent} " +
@@ -530,6 +624,10 @@ class CombinedStressController(
                 "peakMemoryBps=${finished.peakMemoryActivityBytesPerSecond} " +
                 "peakAppPss=${finished.peakAppPssBytes} " +
                 "peakNativePss=${finished.peakNativePssBytes} " +
+                "storageRead=${finished.storageBytesRead} " +
+                "storageWritten=${finished.storageBytesWritten} " +
+                "peakStorageReadBps=${finished.peakStorageReadActivityBytesPerSecond} " +
+                "peakStorageWriteBps=${finished.peakStorageWriteActivityBytesPerSecond} " +
                 "startBattery=${finished.startBatteryTemperatureCelsius} " +
                 "peakBattery=${finished.peakBatteryTemperatureCelsius} " +
                 "highestThermal=${thermalStatusLabel(finished.highestThermalStatus)}",
@@ -548,44 +646,7 @@ class CombinedStressController(
     }
 
     private fun initializeGpuAndReadInfo(): GpuInfo {
-        runCatching { NativeStress.initializeGpu() }
-        return runCatching {
-            GpuInfo(
-                supported = NativeStress.isGpuStressSupported(),
-                deviceName = NativeStress.getGpuDeviceName(),
-                apiVersion = NativeStress.getGpuApiVersion(),
-                vendorId = NativeStress.getGpuVendorId(),
-                deviceId = NativeStress.getGpuDeviceId(),
-                computeQueueSupported = NativeStress.isGpuComputeQueueSupported(),
-                maxWorkGroupCount = longArrayOf(
-                    NativeStress.getGpuMaxWorkGroupCountX(),
-                    NativeStress.getGpuMaxWorkGroupCountY(),
-                    NativeStress.getGpuMaxWorkGroupCountZ(),
-                ),
-                maxWorkGroupSize = longArrayOf(
-                    NativeStress.getGpuMaxWorkGroupSizeX(),
-                    NativeStress.getGpuMaxWorkGroupSizeY(),
-                    NativeStress.getGpuMaxWorkGroupSizeZ(),
-                ),
-                maxWorkGroupInvocations = NativeStress.getGpuMaxWorkGroupInvocations(),
-                timestampSupported = NativeStress.isGpuTimestampSupported(),
-                bufferBytes = NativeStress.getGpuBufferBytes(),
-            )
-        }.getOrElse {
-            GpuInfo(
-                supported = false,
-                deviceName = "Unavailable",
-                apiVersion = 0,
-                vendorId = 0,
-                deviceId = 0,
-                computeQueueSupported = false,
-                maxWorkGroupCount = longArrayOf(0L, 0L, 0L),
-                maxWorkGroupSize = longArrayOf(0L, 0L, 0L),
-                maxWorkGroupInvocations = 0L,
-                timestampSupported = false,
-                bufferBytes = 0L,
-            )
-        }
+        return GpuInfoReader.read()
     }
 
     private fun nativeGpuSnapshot(): GpuSnapshot = runCatching {
@@ -619,8 +680,23 @@ class CombinedStressController(
     }.getOrDefault(fallback)
 
     private fun postState(newState: CombinedStressState) {
-        Log.i(LOG_TAG, "State -> $newState")
+        logInfo("State -> $newState")
         postToMain { listener?.onCombinedStateChanged(newState) }
+    }
+
+    private fun logInfo(message: String) {
+        Log.i(LOG_TAG, message)
+        diagnosticLog.record(message)
+    }
+
+    private fun logWarning(message: String) {
+        Log.w(LOG_TAG, message)
+        diagnosticLog.record("WARNING $message")
+    }
+
+    private fun logError(message: String) {
+        Log.e(LOG_TAG, message)
+        diagnosticLog.record("ERROR $message")
     }
 
     private fun postToMain(action: () -> Unit) {

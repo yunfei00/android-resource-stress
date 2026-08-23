@@ -121,3 +121,47 @@ object GpuMetricsFormatter {
         java.lang.Long.toUnsignedString(checksum, 16).uppercase(Locale.US).takeLast(12)
     }
 }
+
+object GpuInfoReader {
+    fun read(): GpuInfo {
+        runCatching { NativeStress.ensureLoaded() }
+        runCatching { NativeStress.initializeGpu() }
+        return runCatching {
+            GpuInfo(
+                supported = NativeStress.isGpuStressSupported(),
+                deviceName = NativeStress.getGpuDeviceName(),
+                apiVersion = NativeStress.getGpuApiVersion(),
+                vendorId = NativeStress.getGpuVendorId(),
+                deviceId = NativeStress.getGpuDeviceId(),
+                computeQueueSupported = NativeStress.isGpuComputeQueueSupported(),
+                maxWorkGroupCount = longArrayOf(
+                    NativeStress.getGpuMaxWorkGroupCountX(),
+                    NativeStress.getGpuMaxWorkGroupCountY(),
+                    NativeStress.getGpuMaxWorkGroupCountZ(),
+                ),
+                maxWorkGroupSize = longArrayOf(
+                    NativeStress.getGpuMaxWorkGroupSizeX(),
+                    NativeStress.getGpuMaxWorkGroupSizeY(),
+                    NativeStress.getGpuMaxWorkGroupSizeZ(),
+                ),
+                maxWorkGroupInvocations = NativeStress.getGpuMaxWorkGroupInvocations(),
+                timestampSupported = NativeStress.isGpuTimestampSupported(),
+                bufferBytes = NativeStress.getGpuBufferBytes(),
+            )
+        }.getOrElse {
+            GpuInfo(
+                supported = false,
+                deviceName = "Unavailable",
+                apiVersion = 0,
+                vendorId = 0,
+                deviceId = 0,
+                computeQueueSupported = false,
+                maxWorkGroupCount = longArrayOf(0L, 0L, 0L),
+                maxWorkGroupSize = longArrayOf(0L, 0L, 0L),
+                maxWorkGroupInvocations = 0L,
+                timestampSupported = false,
+                bufferBytes = 0L,
+            )
+        }
+    }
+}

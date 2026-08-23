@@ -6,9 +6,11 @@ import android.content.IntentFilter
 import android.os.BatteryManager
 import android.os.Build
 import android.os.PowerManager
+import android.os.StatFs
 
 data class DeviceInfo(
     val manufacturer: String,
+    val brand: String,
     val model: String,
     val androidVersion: String,
     val sdk: Int,
@@ -32,12 +34,21 @@ class DeviceMonitor(private val context: Context) {
 
     fun deviceInfo(): DeviceInfo = DeviceInfo(
         manufacturer = Build.MANUFACTURER.orEmpty().ifBlank { "Unknown" },
+        brand = Build.BRAND.orEmpty().ifBlank { "Unknown" },
         model = Build.MODEL.orEmpty().ifBlank { "Unknown" },
         androidVersion = Build.VERSION.RELEASE.orEmpty().ifBlank { "Unknown" },
         sdk = Build.VERSION.SDK_INT,
         primaryAbi = Build.SUPPORTED_ABIS.firstOrNull() ?: "Unknown",
         logicalCoreCount = Runtime.getRuntime().availableProcessors().coerceAtLeast(1),
     )
+
+    fun storageCapacity(): StorageCapacity {
+        val stats = StatFs(context.filesDir.absolutePath)
+        return StorageCapacity(
+            totalBytes = stats.totalBytes.coerceAtLeast(0L),
+            availableBytes = stats.availableBytes.coerceAtLeast(0L),
+        )
+    }
 
     fun thermalSnapshot(): ThermalSnapshot {
         val battery = context.registerReceiver(
