@@ -5,6 +5,7 @@
 #include <sys/prctl.h>
 
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
 #include <new>
 #include <utility>
@@ -16,6 +17,25 @@ constexpr std::size_t kCopyChunkBytes = 1024U * 1024U;
 constexpr std::int64_t kMaximumTargetBytes = 1536LL * 1024LL * 1024LL;
 constexpr char kLogTag[] = "ResourceStress";
 constexpr char kNativeMappingName[] = "libc_malloc";
+
+std::int64_t readAvailableMemoryBytes() {
+    FILE* file = std::fopen("/proc/meminfo", "r");
+    if (file == nullptr) {
+        return -1;
+    }
+    char label[64]{};
+    unsigned long long valueKiB = 0;
+    char unit[16]{};
+    std::int64_t availableBytes = -1;
+    while (std::fscanf(file, "%63s %llu %15s", label, &valueKiB, unit) == 3) {
+        if (std::strcmp(label, "MemAvailable:") == 0) {
+            availableBytes = static_cast<std::int64_t>(valueKiB * 1024ULL);
+            break;
+        }
+    }
+    std::fclose(file);
+    return availableBytes;
+}
 
 #ifndef PR_SET_VMA
 constexpr int PR_SET_VMA = 0x53564d41;
@@ -29,8 +49,11 @@ MemoryStress::~MemoryStress() {
     stop();
 }
 
-std::int64_t MemoryStress::start(std::int64_t targetBytes) {
-    if (targetBytes <= 0 || targetBytes > kMaximumTargetBytes) {
+std::int64_t MemoryStress::start(
+    std::int64_t targetBytes,
+    std::int64_t minimumAvailableBytes) {
+    if (targetBytes <= 0 || targetBytes > kMaximumTargetBytes ||
+        minimumAvailableBytes < 0) {
         return 0;
     }
 
@@ -42,12 +65,24 @@ std::int64_t MemoryStress::start(std::int64_t targetBytes) {
         active_ = true;
         allocating_ = true;
         stopRequested_.store(false, std::memory_order_release);
+        workerRunning_.store(false, std::memory_order_release);
         allocatedBytes_.store(0, std::memory_order_relaxed);
         processedBytes_.store(0, std::memory_order_relaxed);
     }
 
     std::int64_t remainingBytes = targetBytes;
     while (remainingBytes > 0 && !stopRequested_.load(std::memory_order_acquire)) {
+        const std::int64_t availableBytes = readAvailableMemoryBytes();
+        if (minimumAvailableBytes > 0 && availableBytes >= 0 &&
+            availableBytes < minimumAvailableBytes) {
+            __android_log_print(
+                ANDROID_LOG_WARN,
+                kLogTag,
+                "Memory allocation stopped at safety reserve: available=%lld reserve=%lld",
+                static_cast<long long>(availableBytes),
+                static_cast<long long>(minimumAvailableBytes));
+            break;
+        }
         const std::size_t blockSize = static_cast<std::size_t>(
             std::min<std::int64_t>(remainingBytes, static_cast<std::int64_t>(kAllocationBlockBytes)));
         void* mapping = mmap(
@@ -119,10 +154,12 @@ std::int64_t MemoryStress::start(std::int64_t targetBytes) {
         allocating_ = false;
         if (active_ && !stopRequested_.load(std::memory_order_acquire) && !blocks_.empty()) {
             try {
+                workerRunning_.store(true, std::memory_order_release);
                 worker_ = std::thread(&MemoryStress::workerLoop, this);
             } catch (...) {
                 active_ = false;
                 stopRequested_.store(true, std::memory_order_release);
+                workerRunning_.store(false, std::memory_order_release);
                 workerCreationFailed = true;
             }
         } else if (blocks_.empty()) {
@@ -165,9 +202,14 @@ void MemoryStress::stop() {
         freeBlocksLocked();
         allocatedBytes_.store(0, std::memory_order_relaxed);
         processedBytes_.store(0, std::memory_order_relaxed);
+        workerRunning_.store(false, std::memory_order_release);
         stopping_ = false;
     }
     stateChanged_.notify_all();
+}
+
+bool MemoryStress::isRunning() const {
+    return workerRunning_.load(std::memory_order_acquire);
 }
 
 std::int64_t MemoryStress::allocatedBytes() const {
@@ -191,6 +233,7 @@ void MemoryStress::workerLoop() {
     } catch (const std::bad_alloc&) {
         __android_log_print(ANDROID_LOG_ERROR, kLogTag, "Memory copy buffer allocation failed");
         stopRequested_.store(true, std::memory_order_release);
+        workerRunning_.store(false, std::memory_order_release);
         return;
     }
 
@@ -215,6 +258,7 @@ void MemoryStress::workerLoop() {
         sink_.store(checksum, std::memory_order_relaxed);
     }
     sink_.fetch_xor(checksum, std::memory_order_relaxed);
+    workerRunning_.store(false, std::memory_order_release);
 }
 
 void MemoryStress::freeBlocksLocked() {

@@ -18,7 +18,13 @@ object NativeStress {
     external fun startMemoryStress(targetBytes: Long): Long
 
     @JvmStatic
+    external fun startMemoryStressSafely(targetBytes: Long, minimumAvailableBytes: Long): Long
+
+    @JvmStatic
     external fun stopMemoryStress()
+
+    @JvmStatic
+    external fun isMemoryStressRunning(): Boolean
 
     @JvmStatic
     external fun getAllocatedMemoryBytes(): Long

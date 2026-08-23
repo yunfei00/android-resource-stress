@@ -33,8 +33,19 @@ jlong startMemoryStress(JNIEnv*, jclass, jlong targetBytes) {
         gMemoryStress.start(static_cast<std::int64_t>(targetBytes)));
 }
 
+jlong startMemoryStressSafely(
+        JNIEnv*, jclass, jlong targetBytes, jlong minimumAvailableBytes) {
+    return static_cast<jlong>(gMemoryStress.start(
+        static_cast<std::int64_t>(targetBytes),
+        static_cast<std::int64_t>(minimumAvailableBytes)));
+}
+
 void stopMemoryStress(JNIEnv*, jclass) {
     gMemoryStress.stop();
+}
+
+jboolean isMemoryStressRunning(JNIEnv*, jclass) {
+    return gMemoryStress.isRunning() ? JNI_TRUE : JNI_FALSE;
 }
 
 jlong getAllocatedMemoryBytes(JNIEnv*, jclass) {
@@ -154,8 +165,12 @@ JNINativeMethod kMethods[] = {
      reinterpret_cast<void*>(getCpuStressThreadCount)},
     {const_cast<char*>("startMemoryStress"), const_cast<char*>("(J)J"),
      reinterpret_cast<void*>(startMemoryStress)},
+    {const_cast<char*>("startMemoryStressSafely"), const_cast<char*>("(JJ)J"),
+     reinterpret_cast<void*>(startMemoryStressSafely)},
     {const_cast<char*>("stopMemoryStress"), const_cast<char*>("()V"),
      reinterpret_cast<void*>(stopMemoryStress)},
+    {const_cast<char*>("isMemoryStressRunning"), const_cast<char*>("()Z"),
+     reinterpret_cast<void*>(isMemoryStressRunning)},
     {const_cast<char*>("getAllocatedMemoryBytes"), const_cast<char*>("()J"),
      reinterpret_cast<void*>(getAllocatedMemoryBytes)},
     {const_cast<char*>("getProcessedMemoryBytes"), const_cast<char*>("()J"),

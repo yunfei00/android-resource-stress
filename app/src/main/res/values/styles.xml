@@ -62,4 +62,21 @@
         <item name="android:layout_marginBottom">@dimen/row_spacing</item>
         <item name="android:orientation">horizontal</item>
     </style>
+
+    <style name="ConfigLabel">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:textColor">@color/text_secondary</item>
+        <item name="android:textSize">13sp</item>
+    </style>
+
+    <style name="ConfigChoice">
+        <item name="android:layout_width">0dp</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_weight">1</item>
+        <item name="android:minWidth">0dp</item>
+        <item name="android:minHeight">48dp</item>
+        <item name="android:textColor">@color/text_primary</item>
+        <item name="android:textSize">11sp</item>
+    </style>
 </resources>

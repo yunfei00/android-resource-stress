@@ -1,23 +1,34 @@
 package com.androidresourcestress
 
 import android.app.Activity
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
-import android.os.SystemClock
 import android.view.View
+import android.view.ViewGroup
+import android.view.WindowInsets
+import android.view.WindowManager
+import android.widget.AdapterView
+import android.widget.ArrayAdapter
 import android.widget.Button
+import android.widget.CheckBox
 import android.widget.RadioGroup
+import android.widget.Spinner
 import android.widget.TextView
 import android.widget.Toast
 import java.util.Locale
-import kotlin.math.max
 import kotlin.math.min
 
-class MainActivity : Activity(), StressController.Listener, GpuController.Listener {
+class MainActivity : Activity(), CombinedStressController.Listener {
     private lateinit var statusValue: TextView
     private lateinit var elapsedValue: TextView
+    private lateinit var sessionPresetValue: TextView
+    private lateinit var sessionDurationValue: TextView
+    private lateinit var sessionStopReasonValue: TextView
+    private lateinit var sessionPeaksValue: TextView
+    private lateinit var lastErrorValue: TextView
     private lateinit var cpuStateValue: TextView
     private lateinit var cpuTargetValue: TextView
     private lateinit var appCpuLoadValue: TextView
@@ -32,22 +43,9 @@ class MainActivity : Activity(), StressController.Listener, GpuController.Listen
     private lateinit var stressTargetValue: TextView
     private lateinit var allocatedValue: TextView
     private lateinit var memoryActivityValue: TextView
-    private lateinit var batteryTemperatureValue: TextView
-    private lateinit var thermalStatusValue: TextView
-    private lateinit var cpuLoadGroup: RadioGroup
-    private lateinit var ramTargetGroup: RadioGroup
-    private lateinit var startButton: Button
-    private lateinit var stopButton: Button
-    private lateinit var configurationPanel: View
     private lateinit var gpuDeviceValue: TextView
     private lateinit var gpuVulkanValue: TextView
-    private lateinit var gpuVendorDeviceValue: TextView
     private lateinit var gpuComputeValue: TextView
-    private lateinit var gpuMaxWorkGroupCountValue: TextView
-    private lateinit var gpuMaxWorkGroupSizeValue: TextView
-    private lateinit var gpuMaxInvocationsValue: TextView
-    private lateinit var gpuTimestampValue: TextView
-    private lateinit var gpuBufferValue: TextView
     private lateinit var gpuTargetValue: TextView
     private lateinit var gpuStatusValue: TextView
     private lateinit var gpuDispatchCountValue: TextView
@@ -55,26 +53,32 @@ class MainActivity : Activity(), StressController.Listener, GpuController.Listen
     private lateinit var gpuWorkTimeValue: TextView
     private lateinit var gpuComputeActivityValue: TextView
     private lateinit var gpuOutputValue: TextView
+    private lateinit var thermalProtectionValue: TextView
+    private lateinit var thermalStatusValue: TextView
+    private lateinit var batteryTemperatureValue: TextView
+    private lateinit var startTemperatureValue: TextView
+    private lateinit var peakTemperatureValue: TextView
+    private lateinit var deltaTemperatureValue: TextView
+    private lateinit var thermalMessageValue: TextView
+    private lateinit var configurationPanel: ViewGroup
+    private lateinit var presetGroup: RadioGroup
+    private lateinit var cpuLoadGroup: RadioGroup
     private lateinit var gpuLoadGroup: RadioGroup
-    private lateinit var gpuConfigurationPanel: View
-    private lateinit var startGpuButton: Button
-    private lateinit var stopGpuButton: Button
+    private lateinit var ramTargetGroup: RadioGroup
+    private lateinit var resourceCpu: CheckBox
+    private lateinit var resourceGpu: CheckBox
+    private lateinit var resourceMemory: CheckBox
+    private lateinit var durationSpinner: Spinner
+    private lateinit var startButton: Button
+    private lateinit var stopButton: Button
 
-    private lateinit var deviceMonitor: DeviceMonitor
-    private lateinit var memoryMonitor: MemoryMonitor
-    private lateinit var cpuMonitor: CpuMonitor
-    private lateinit var memoryActivityMonitor: MemoryActivityMonitor
-    private lateinit var stressController: StressController
-    private lateinit var gpuController: GpuController
-    private lateinit var gpuActivityMonitor: GpuActivityMonitor
-
+    private lateinit var controller: CombinedStressController
     private val monitorHandler = Handler(Looper.getMainLooper())
+    private val durations = StressDuration.entries.toTypedArray()
     private var monitoring = false
     private var nativeAvailable = false
-    private var cpuMemoryRunStartedAtMs = 0L
-    private var gpuRunStartedAtMs = 0L
-    private var thermalStopTriggered = false
-    private var logicalCoreCount = 1
+    private var applyingPreset = false
+    private var lastSnapshot: CombinedRuntimeSnapshot? = null
 
     private val monitorRunnable = object : Runnable {
         override fun run() {
@@ -88,50 +92,37 @@ class MainActivity : Activity(), StressController.Listener, GpuController.Listen
         super.onCreate(savedInstanceState)
         val nativeLoadError = runCatching { NativeStress.ensureLoaded() }.exceptionOrNull()
         nativeAvailable = nativeLoadError == null
-
         setContentView(R.layout.activity_main)
+        installSystemBarInsets()
         bindViews()
 
-        deviceMonitor = DeviceMonitor(this)
-        memoryMonitor = MemoryMonitor(this)
-        memoryActivityMonitor = MemoryActivityMonitor()
-        gpuActivityMonitor = GpuActivityMonitor()
+        val deviceMonitor = DeviceMonitor(this)
         val deviceInfo = deviceMonitor.deviceInfo()
-        logicalCoreCount = deviceInfo.logicalCoreCount
-        cpuMonitor = CpuMonitor(logicalCoreCount)
-        stressController = StressController(this)
-        gpuController = GpuController(this)
-
         renderDeviceInfo(deviceInfo)
-        installConfigurationListeners()
-        startButton.setOnClickListener { startStress() }
-        stopButton.setOnClickListener { stopAll() }
-        startGpuButton.setOnClickListener { startGpuStress() }
-        stopGpuButton.setOnClickListener { gpuController.stop() }
-        renderState(StressController.State.STOPPED)
-        renderGpuState(GpuController.State.CHECKING)
+        controller = CombinedStressController(this, deviceInfo.logicalCoreCount, this)
 
-        if (nativeLoadError != null) {
-            Toast.makeText(
-                this,
-                getString(
-                    R.string.native_load_failed,
-                    nativeLoadError.message ?: nativeLoadError.javaClass.simpleName,
-                ),
-                Toast.LENGTH_LONG,
-            ).show()
-            renderGpuState(GpuController.State.ERROR)
+        installConfigurationListeners()
+        configureDurationSpinner()
+        applyPreset(StressPreset.EXTREME)
+        startButton.setOnClickListener { startSession() }
+        stopButton.setOnClickListener { controller.stopAll(StopReason.USER) }
+        renderState(CombinedStressState.IDLE)
+
+        if (nativeLoadError == null) {
+            controller.initialize()
         } else {
-            gpuController.initialize()
+            val message = getString(
+                R.string.native_load_failed,
+                nativeLoadError.message ?: nativeLoadError.javaClass.simpleName,
+            )
+            lastErrorValue.text = message
+            Toast.makeText(this, message, Toast.LENGTH_LONG).show()
         }
     }
 
     override fun onStart() {
         super.onStart()
         monitoring = true
-        cpuMonitor.reset()
-        memoryActivityMonitor.reset(nativeProcessedBytes())
-        gpuActivityMonitor.reset(runCatching { gpuController.snapshot() }.getOrNull())
         monitorHandler.removeCallbacks(monitorRunnable)
         monitorHandler.post(monitorRunnable)
     }
@@ -139,92 +130,50 @@ class MainActivity : Activity(), StressController.Listener, GpuController.Listen
     override fun onStop() {
         monitoring = false
         monitorHandler.removeCallbacks(monitorRunnable)
-        stressController.stop()
-        gpuController.stop()
+        controller.stopAll(StopReason.ACTIVITY_STOPPED)
+        window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         super.onStop()
     }
 
     override fun onDestroy() {
         monitoring = false
         monitorHandler.removeCallbacksAndMessages(null)
-        stressController.close()
-        gpuController.close()
+        controller.close()
         super.onDestroy()
     }
 
-    override fun onStateChanged(state: StressController.State) {
-        when (state) {
-            StressController.State.STARTING -> {
-                cpuMemoryRunStartedAtMs = SystemClock.elapsedRealtime()
-                thermalStopTriggered = false
-                cpuMonitor.reset()
-                memoryActivityMonitor.reset(nativeProcessedBytes())
-            }
-
-            StressController.State.STOPPED -> {
-                cpuMemoryRunStartedAtMs = 0L
-                memoryActivityMonitor.reset(nativeProcessedBytes())
-            }
-
-            StressController.State.RUNNING,
-            StressController.State.STOPPING,
-            -> Unit
-        }
+    override fun onCombinedStateChanged(state: CombinedStressState) {
         renderState(state)
         updateLiveMetrics()
     }
 
     override fun onGpuInfoAvailable(info: GpuInfo) {
-        renderGpuInfo(info)
-    }
-
-    override fun onGpuStateChanged(state: GpuController.State) {
-        when (state) {
-            GpuController.State.STARTING -> {
-                gpuRunStartedAtMs = SystemClock.elapsedRealtime()
-                thermalStopTriggered = false
-                gpuActivityMonitor.reset(runCatching { gpuController.snapshot() }.getOrNull())
-            }
-
-            GpuController.State.STOPPED,
-            GpuController.State.UNSUPPORTED,
-            GpuController.State.ERROR,
-            -> {
-                gpuRunStartedAtMs = 0L
-                gpuActivityMonitor.reset(runCatching { gpuController.snapshot() }.getOrNull())
-            }
-
-            GpuController.State.CHECKING,
-            GpuController.State.RUNNING,
-            GpuController.State.STOPPING,
-            -> Unit
-        }
-        renderGpuState(state)
-        updateLiveMetrics()
-    }
-
-    override fun onGpuError(message: String) {
-        Toast.makeText(this, message, Toast.LENGTH_LONG).show()
-    }
-
-    override fun onStarted(allocatedMemoryBytes: Long, requestedMemoryBytes: Long) {
-        if (allocatedMemoryBytes < requestedMemoryBytes) {
-            Toast.makeText(
-                this,
-                "Memory allocation stopped at ${ByteFormatter.formatBytes(allocatedMemoryBytes)} " +
-                    "of ${ByteFormatter.formatBytes(requestedMemoryBytes)}.",
-                Toast.LENGTH_LONG,
-            ).show()
+        gpuDeviceValue.text = info.deviceName
+        gpuVulkanValue.text = info.apiVersionLabel
+        gpuComputeValue.text = if (info.computeQueueSupported) {
+            getString(R.string.supported)
+        } else {
+            getString(R.string.unsupported)
         }
     }
 
-    override fun onError(message: String) {
+    override fun onSessionFinished(session: StressSessionSnapshot) {
+        renderSession(session, session)
+    }
+
+    override fun onCombinedError(message: String) {
+        lastErrorValue.text = message
         Toast.makeText(this, message, Toast.LENGTH_LONG).show()
     }
 
     private fun bindViews() {
         statusValue = findViewById(R.id.statusValue)
         elapsedValue = findViewById(R.id.elapsedValue)
+        sessionPresetValue = findViewById(R.id.sessionPresetValue)
+        sessionDurationValue = findViewById(R.id.sessionDurationValue)
+        sessionStopReasonValue = findViewById(R.id.sessionStopReasonValue)
+        sessionPeaksValue = findViewById(R.id.sessionPeaksValue)
+        lastErrorValue = findViewById(R.id.lastErrorValue)
         cpuStateValue = findViewById(R.id.cpuStateValue)
         cpuTargetValue = findViewById(R.id.cpuTargetValue)
         appCpuLoadValue = findViewById(R.id.appCpuLoadValue)
@@ -239,22 +188,9 @@ class MainActivity : Activity(), StressController.Listener, GpuController.Listen
         stressTargetValue = findViewById(R.id.stressTargetValue)
         allocatedValue = findViewById(R.id.allocatedValue)
         memoryActivityValue = findViewById(R.id.memoryActivityValue)
-        batteryTemperatureValue = findViewById(R.id.batteryTemperatureValue)
-        thermalStatusValue = findViewById(R.id.thermalStatusValue)
-        cpuLoadGroup = findViewById(R.id.cpuLoadGroup)
-        ramTargetGroup = findViewById(R.id.ramTargetGroup)
-        startButton = findViewById(R.id.startButton)
-        stopButton = findViewById(R.id.stopButton)
-        configurationPanel = findViewById(R.id.configurationPanel)
         gpuDeviceValue = findViewById(R.id.gpuDeviceValue)
         gpuVulkanValue = findViewById(R.id.gpuVulkanValue)
-        gpuVendorDeviceValue = findViewById(R.id.gpuVendorDeviceValue)
         gpuComputeValue = findViewById(R.id.gpuComputeValue)
-        gpuMaxWorkGroupCountValue = findViewById(R.id.gpuMaxWorkGroupCountValue)
-        gpuMaxWorkGroupSizeValue = findViewById(R.id.gpuMaxWorkGroupSizeValue)
-        gpuMaxInvocationsValue = findViewById(R.id.gpuMaxInvocationsValue)
-        gpuTimestampValue = findViewById(R.id.gpuTimestampValue)
-        gpuBufferValue = findViewById(R.id.gpuBufferValue)
         gpuTargetValue = findViewById(R.id.gpuTargetValue)
         gpuStatusValue = findViewById(R.id.gpuStatusValue)
         gpuDispatchCountValue = findViewById(R.id.gpuDispatchCountValue)
@@ -262,10 +198,33 @@ class MainActivity : Activity(), StressController.Listener, GpuController.Listen
         gpuWorkTimeValue = findViewById(R.id.gpuWorkTimeValue)
         gpuComputeActivityValue = findViewById(R.id.gpuComputeActivityValue)
         gpuOutputValue = findViewById(R.id.gpuOutputValue)
+        thermalProtectionValue = findViewById(R.id.thermalProtectionValue)
+        thermalStatusValue = findViewById(R.id.thermalStatusValue)
+        batteryTemperatureValue = findViewById(R.id.batteryTemperatureValue)
+        startTemperatureValue = findViewById(R.id.startTemperatureValue)
+        peakTemperatureValue = findViewById(R.id.peakTemperatureValue)
+        deltaTemperatureValue = findViewById(R.id.deltaTemperatureValue)
+        thermalMessageValue = findViewById(R.id.thermalMessageValue)
+        configurationPanel = findViewById(R.id.configurationPanel)
+        presetGroup = findViewById(R.id.presetGroup)
+        cpuLoadGroup = findViewById(R.id.cpuLoadGroup)
         gpuLoadGroup = findViewById(R.id.gpuLoadGroup)
-        gpuConfigurationPanel = findViewById(R.id.gpuConfigurationPanel)
-        startGpuButton = findViewById(R.id.startGpuButton)
-        stopGpuButton = findViewById(R.id.stopGpuButton)
+        ramTargetGroup = findViewById(R.id.ramTargetGroup)
+        resourceCpu = findViewById(R.id.resourceCpu)
+        resourceGpu = findViewById(R.id.resourceGpu)
+        resourceMemory = findViewById(R.id.resourceMemory)
+        durationSpinner = findViewById(R.id.durationSpinner)
+        startButton = findViewById(R.id.startButton)
+        stopButton = findViewById(R.id.stopButton)
+    }
+
+    private fun installSystemBarInsets() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
+        findViewById<View>(R.id.rootScroll).setOnApplyWindowInsetsListener { view, insets ->
+            val systemBars = insets.getInsets(WindowInsets.Type.systemBars())
+            view.setPadding(systemBars.left, systemBars.top, systemBars.right, systemBars.bottom)
+            insets
+        }
     }
 
     private fun renderDeviceInfo(info: DeviceInfo) {
@@ -278,284 +237,372 @@ class MainActivity : Activity(), StressController.Listener, GpuController.Listen
     }
 
     private fun installConfigurationListeners() {
-        cpuLoadGroup.setOnCheckedChangeListener { _, _ ->
-            cpuTargetValue.text = "${selectedCpuLoadPercent()}%"
+        presetGroup.setOnCheckedChangeListener { _, checkedId ->
+            if (applyingPreset) return@setOnCheckedChangeListener
+            when (checkedId) {
+                R.id.presetBalanced -> applyPreset(StressPreset.BALANCED)
+                R.id.presetHigh -> applyPreset(StressPreset.HIGH)
+                R.id.presetExtreme -> applyPreset(StressPreset.EXTREME)
+                else -> renderConfigurationPreview()
+            }
         }
-        ramTargetGroup.setOnCheckedChangeListener { _, _ -> updateMemoryTargetPreview() }
-        gpuLoadGroup.setOnCheckedChangeListener { _, _ ->
-            gpuTargetValue.text = "${selectedGpuLoadPercent()}%"
+        val manualGroupListener = RadioGroup.OnCheckedChangeListener { _, _ ->
+            markCustomPreset()
         }
-        cpuTargetValue.text = "${selectedCpuLoadPercent()}%"
-        gpuTargetValue.text = "${selectedGpuLoadPercent()}%"
-        updateMemoryTargetPreview()
+        cpuLoadGroup.setOnCheckedChangeListener(manualGroupListener)
+        gpuLoadGroup.setOnCheckedChangeListener(manualGroupListener)
+        ramTargetGroup.setOnCheckedChangeListener(manualGroupListener)
+        val resourceListener = View.OnClickListener { markCustomPreset() }
+        resourceCpu.setOnClickListener(resourceListener)
+        resourceGpu.setOnClickListener(resourceListener)
+        resourceMemory.setOnClickListener(resourceListener)
     }
 
-    private fun startStress() {
-        if (!nativeAvailable || stressController.state != StressController.State.STOPPED ||
-            gpuController.state == GpuController.State.STARTING ||
-            gpuController.state == GpuController.State.RUNNING ||
-            gpuController.state == GpuController.State.STOPPING
-        ) {
-            return
-        }
-        val memory = memoryMonitor.sample()
-        if (memory.lowMemory) {
-            Toast.makeText(this, R.string.low_memory_refusal, Toast.LENGTH_LONG).show()
-            return
-        }
-
-        val requestedTarget = selectedMemoryTargetBytes(memory.availableBytes)
-        val reserveBytes = max(memory.lowMemoryThresholdBytes, MIN_SYSTEM_RESERVE_BYTES)
-        val maximumSafeTarget = (memory.availableBytes - reserveBytes).coerceAtLeast(0L)
-        if (requestedTarget < MIN_NATIVE_TARGET_BYTES || requestedTarget > maximumSafeTarget) {
-            Toast.makeText(this, R.string.unsafe_memory_refusal, Toast.LENGTH_LONG).show()
-            return
-        }
-
-        stressTargetValue.text = ByteFormatter.formatBytes(requestedTarget)
-        stressController.start(
-            StressController.Configuration(
-                cpuThreadCount = logicalCoreCount,
-                cpuTargetLoadPercent = selectedCpuLoadPercent(),
-                memoryTargetBytes = requestedTarget,
-            ),
+    private fun configureDurationSpinner() {
+        val adapter = ArrayAdapter(
+            this,
+            android.R.layout.simple_spinner_item,
+            durations.map { it.displayLabel },
         )
+        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+        durationSpinner.adapter = adapter
+        durationSpinner.setSelection(durations.indexOf(StressDuration.MINUTES_5))
+        durationSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                renderConfigurationPreview()
+            }
+
+            override fun onNothingSelected(parent: AdapterView<*>?) = Unit
+        }
     }
 
-    private fun selectedCpuLoadPercent(): Int = when (cpuLoadGroup.checkedRadioButtonId) {
+    private fun applyPreset(preset: StressPreset) {
+        applyingPreset = true
+        presetGroup.check(
+            when (preset) {
+                StressPreset.BALANCED -> R.id.presetBalanced
+                StressPreset.HIGH -> R.id.presetHigh
+                StressPreset.EXTREME -> R.id.presetExtreme
+                StressPreset.CUSTOM -> R.id.presetCustom
+            },
+        )
+        resourceCpu.isChecked = true
+        resourceGpu.isChecked = true
+        resourceMemory.isChecked = true
+        when (preset) {
+            StressPreset.BALANCED -> {
+                cpuLoadGroup.check(R.id.cpu50)
+                gpuLoadGroup.check(R.id.gpu50)
+                ramTargetGroup.check(R.id.ram512)
+            }
+            StressPreset.HIGH -> {
+                cpuLoadGroup.check(R.id.cpu75)
+                gpuLoadGroup.check(R.id.gpu75)
+                ramTargetGroup.check(R.id.ramAuto)
+            }
+            StressPreset.EXTREME -> {
+                cpuLoadGroup.check(R.id.cpu100)
+                gpuLoadGroup.check(R.id.gpu100)
+                ramTargetGroup.check(R.id.ramAuto)
+            }
+            StressPreset.CUSTOM -> Unit
+        }
+        applyingPreset = false
+        renderConfigurationPreview()
+    }
+
+    private fun markCustomPreset() {
+        if (applyingPreset) return
+        applyingPreset = true
+        presetGroup.check(R.id.presetCustom)
+        applyingPreset = false
+        renderConfigurationPreview()
+    }
+
+    private fun startSession() {
+        if (!nativeAvailable || controller.state != CombinedStressState.IDLE) return
+        if (!resourceCpu.isChecked && !resourceGpu.isChecked && !resourceMemory.isChecked) {
+            Toast.makeText(this, R.string.select_resource, Toast.LENGTH_LONG).show()
+            return
+        }
+        controller.start(configurationFromControls())
+    }
+
+    private fun configurationFromControls(): CombinedStressConfiguration =
+        CombinedStressConfiguration(
+            preset = selectedPreset(),
+            cpuEnabled = resourceCpu.isChecked,
+            gpuEnabled = resourceGpu.isChecked,
+            memoryEnabled = resourceMemory.isChecked,
+            cpuTargetPercent = selectedCpuTarget(),
+            gpuTargetPercent = selectedGpuTarget(),
+            memoryTarget = selectedMemoryTarget(),
+            duration = durations.getOrElse(durationSpinner.selectedItemPosition) {
+                StressDuration.MINUTES_5
+            },
+        )
+
+    private fun selectedPreset(): StressPreset = when (presetGroup.checkedRadioButtonId) {
+        R.id.presetBalanced -> StressPreset.BALANCED
+        R.id.presetHigh -> StressPreset.HIGH
+        R.id.presetExtreme -> StressPreset.EXTREME
+        else -> StressPreset.CUSTOM
+    }
+
+    private fun selectedCpuTarget(): Int = when (cpuLoadGroup.checkedRadioButtonId) {
         R.id.cpu25 -> 25
         R.id.cpu50 -> 50
         R.id.cpu75 -> 75
         else -> 100
     }
 
-    private fun startGpuStress() {
-        if (!nativeAvailable || gpuController.state != GpuController.State.STOPPED ||
-            stressController.state != StressController.State.STOPPED
-        ) {
-            return
-        }
-        gpuController.start(selectedGpuLoadPercent())
-    }
-
-    private fun selectedGpuLoadPercent(): Int = when (gpuLoadGroup.checkedRadioButtonId) {
+    private fun selectedGpuTarget(): Int = when (gpuLoadGroup.checkedRadioButtonId) {
         R.id.gpu25 -> 25
         R.id.gpu50 -> 50
         R.id.gpu75 -> 75
         else -> 100
     }
 
-    private fun stopAll() {
-        stressController.stop()
-        gpuController.stop()
+    private fun selectedMemoryTarget(): MemoryTarget = when (ramTargetGroup.checkedRadioButtonId) {
+        R.id.ram256 -> MemoryTarget.MIB_256
+        R.id.ram512 -> MemoryTarget.MIB_512
+        R.id.ram1gb -> MemoryTarget.GIB_1
+        else -> MemoryTarget.AUTO
     }
 
-    private fun selectedMemoryTargetBytes(availableBytes: Long): Long =
-        when (ramTargetGroup.checkedRadioButtonId) {
-            R.id.ram256 -> 256L * MIB
-            R.id.ram1gb -> 1024L * MIB
-            R.id.ramAuto -> min(availableBytes / 5L, MAX_AUTO_TARGET_BYTES)
-                .floorToMib()
+    private fun updateLiveMetrics() {
+        val snapshot = controller.runtimeSnapshot()
+        lastSnapshot = snapshot
+        renderState(snapshot.state)
+        renderRuntime(snapshot)
+    }
 
-            else -> DEFAULT_MEMORY_TARGET_BYTES
-        }
+    private fun renderRuntime(snapshot: CombinedRuntimeSnapshot) {
+        elapsedValue.text = formatElapsed(snapshot.elapsedTimeMs)
+        appCpuLoadValue.text = formatPercent(snapshot.cpuLoadPercent, 1)
+        coreEquivalentValue.text = formatPercent(snapshot.coreEquivalentPercent, 0)
+        threadsValue.text = snapshot.cpuThreadCount.toString()
 
-    private fun updateMemoryTargetPreview() {
-        val memory = runCatching { memoryMonitor.sample() }.getOrNull()
-        val target = selectedMemoryTargetBytes(memory?.availableBytes ?: 0L)
-        stressTargetValue.text = if (ramTargetGroup.checkedRadioButtonId == R.id.ramAuto) {
-            "${ByteFormatter.formatBytes(target)} (Auto)"
+        totalRamValue.text = ByteFormatter.formatBytes(snapshot.memory.totalBytes)
+        availableRamValue.text = ByteFormatter.formatBytes(snapshot.memory.availableBytes)
+        systemUsedValue.text = ByteFormatter.formatBytes(snapshot.memory.systemUsedBytes)
+        appPssValue.text = ByteFormatter.formatBytes(snapshot.memory.appPssBytes)
+        nativePssValue.text = ByteFormatter.formatBytes(snapshot.memory.nativePssBytes)
+        allocatedValue.text = ByteFormatter.formatBytes(snapshot.allocatedMemoryBytes)
+        memoryActivityValue.text = ByteFormatter.formatRate(snapshot.memoryActivityBytesPerSecond)
+
+        gpuDispatchCountValue.text = snapshot.gpu.dispatchCount.toString()
+        gpuDispatchRateValue.text = GpuMetricsFormatter.formatDispatchRate(snapshot.gpuDispatchRate)
+        gpuComputeActivityValue.text = GpuMetricsFormatter.formatWorkGroupRate(
+            snapshot.gpuWorkGroupsPerSecond,
+        )
+        gpuWorkTimeValue.text = GpuMetricsFormatter.formatGpuWorkTime(
+            snapshot.gpu.gpuWorkNanos,
+            controller.gpuInfo?.timestampSupported == true,
+        )
+        gpuOutputValue.text = GpuMetricsFormatter.formatChecksum(snapshot.gpu.outputChecksum)
+
+        val configuration = snapshot.currentSession?.configuration ?: configurationFromControls()
+        cpuTargetValue.text = "${configuration.cpuTargetPercent}%"
+        gpuTargetValue.text = "${configuration.gpuTargetPercent}%"
+        stressTargetValue.text = snapshot.currentSession?.let {
+            ByteFormatter.formatBytes(it.resolvedMemoryTargetBytes)
+        } ?: formatMemoryTarget(configuration.memoryTarget, snapshot.memory.availableBytes)
+        renderResourceStates(configuration, snapshot)
+        renderThermal(snapshot)
+        renderSession(snapshot.currentSession, snapshot.lastSession)
+    }
+
+    private fun renderResourceStates(
+        configuration: CombinedStressConfiguration,
+        snapshot: CombinedRuntimeSnapshot,
+    ) {
+        cpuStateValue.text = resourceState(
+            configuration.cpuEnabled,
+            snapshot.state,
+            snapshot.cpuThreadCount > 0,
+        )
+        memoryStateValue.text = resourceState(
+            configuration.memoryEnabled,
+            snapshot.state,
+            snapshot.allocatedMemoryBytes > 0L,
+        )
+        gpuStatusValue.text = if (!configuration.gpuEnabled &&
+            snapshot.state != CombinedStressState.STARTING
+        ) {
+            "OFF"
         } else {
-            ByteFormatter.formatBytes(target)
+            when (snapshot.state) {
+                CombinedStressState.STARTING -> "STARTING"
+                CombinedStressState.STOPPING -> "STOPPING"
+                CombinedStressState.THERMAL_LIMITED -> "THERMAL_LIMITED"
+                CombinedStressState.ERROR -> "ERROR"
+                else -> snapshot.gpu.status.name
+            }
+        }
+        cpuStateValue.setTextColor(resourceColor(cpuStateValue.text.toString()))
+        memoryStateValue.setTextColor(resourceColor(memoryStateValue.text.toString()))
+        gpuStatusValue.setTextColor(resourceColor(gpuStatusValue.text.toString()))
+    }
+
+    private fun resourceState(
+        enabled: Boolean,
+        state: CombinedStressState,
+        nativeRunning: Boolean,
+    ): String {
+        if (!enabled && state != CombinedStressState.STARTING) return "OFF"
+        return when (state) {
+            CombinedStressState.STARTING -> "STARTING"
+            CombinedStressState.RUNNING -> if (nativeRunning) "RUNNING" else "ERROR"
+            CombinedStressState.STOPPING -> "STOPPING"
+            CombinedStressState.THERMAL_LIMITED -> "THERMAL_LIMITED"
+            CombinedStressState.ERROR -> "ERROR"
+            CombinedStressState.IDLE -> "OFF"
         }
     }
 
-    private fun renderState(state: StressController.State) {
-        val stateLabel = state.name
-        cpuStateValue.text = stateLabel
-        memoryStateValue.text = stateLabel
-        val statusColor = when (state) {
-            StressController.State.RUNNING -> getColor(R.color.safe)
-            StressController.State.STARTING,
-            StressController.State.STOPPING,
-            -> getColor(R.color.warning)
-
-            StressController.State.STOPPED -> getColor(R.color.text_secondary)
-        }
-        cpuStateValue.setTextColor(statusColor)
-        memoryStateValue.setTextColor(statusColor)
-        renderControls()
-        renderGlobalState()
-    }
-
-    private fun renderGpuInfo(info: GpuInfo) {
-        gpuDeviceValue.text = info.deviceName
-        gpuVulkanValue.text = info.apiVersionLabel
-        gpuVendorDeviceValue.text = info.vendorDeviceLabel
-        gpuComputeValue.text = if (info.computeQueueSupported) {
-            getString(R.string.supported)
+    private fun renderThermal(snapshot: CombinedRuntimeSnapshot) {
+        thermalProtectionValue.setTextColor(getColor(R.color.safe))
+        thermalStatusValue.text = snapshot.thermal.statusLabel
+        thermalStatusValue.setTextColor(thermalColor(snapshot.thermal.status))
+        batteryTemperatureValue.text = formatTemperature(
+            snapshot.thermal.batteryTemperatureCelsius,
+        )
+        val session = snapshot.currentSession ?: snapshot.lastSession
+        startTemperatureValue.text = formatTemperature(session?.startBatteryTemperatureCelsius)
+        peakTemperatureValue.text = formatTemperature(session?.peakBatteryTemperatureCelsius)
+        val comparisonTemperature = if (snapshot.currentSession != null) {
+            snapshot.thermal.batteryTemperatureCelsius
         } else {
-            getString(R.string.unsupported)
+            session?.peakBatteryTemperatureCelsius
         }
-        gpuMaxWorkGroupCountValue.text = info.maxWorkGroupCountLabel
-        gpuMaxWorkGroupSizeValue.text = info.maxWorkGroupSizeLabel
-        gpuMaxInvocationsValue.text = info.maxWorkGroupInvocations.toString()
-        gpuTimestampValue.text = if (info.timestampSupported) {
-            getString(R.string.supported)
+        deltaTemperatureValue.text = if (
+            session?.startBatteryTemperatureCelsius != null && comparisonTemperature != null
+        ) {
+            String.format(
+                Locale.US,
+                "%+.1f °C",
+                comparisonTemperature - session.startBatteryTemperatureCelsius,
+            )
         } else {
-            getString(R.string.unsupported)
+            getString(R.string.not_available)
         }
-        gpuBufferValue.text = ByteFormatter.formatBytes(info.bufferBytes)
+        val warming = snapshot.thermal.status >= PowerManager.THERMAL_STATUS_MODERATE
+        thermalMessageValue.setText(
+            if (warming) R.string.thermal_warming else R.string.thermal_normal,
+        )
+        thermalMessageValue.setTextColor(
+            if (warming) getColor(R.color.warning) else getColor(R.color.text_secondary),
+        )
     }
 
-    private fun renderGpuState(state: GpuController.State) {
-        gpuStatusValue.text = state.name
-        val color = when (state) {
-            GpuController.State.RUNNING -> getColor(R.color.safe)
-            GpuController.State.STARTING,
-            GpuController.State.STOPPING,
-            GpuController.State.CHECKING,
-            -> getColor(R.color.warning)
-
-            GpuController.State.ERROR -> getColor(R.color.danger)
-            GpuController.State.STOPPED,
-            GpuController.State.UNSUPPORTED,
-            -> getColor(R.color.text_secondary)
+    private fun renderSession(
+        current: StressSessionSnapshot?,
+        last: StressSessionSnapshot?,
+    ) {
+        val session = current ?: last
+        val configuration = current?.configuration ?: if (last == null) {
+            configurationFromControls()
+        } else {
+            last.configuration
         }
-        gpuStatusValue.setTextColor(color)
-        renderControls()
-        renderGlobalState()
+        sessionPresetValue.text = configuration.preset.name
+        sessionDurationValue.text = configuration.duration.displayLabel
+        sessionStopReasonValue.text = session?.stopReason?.name ?: getString(R.string.not_available)
+        sessionPeaksValue.text = session?.let {
+            String.format(
+                Locale.US,
+                "CPU %.1f%% · GPU %.1f/s · PSS %s",
+                it.peakCpuLoadPercent,
+                it.peakDispatchRate,
+                ByteFormatter.formatBytes(it.peakAppPssBytes),
+            )
+        } ?: getString(R.string.waiting)
+        lastErrorValue.text = session?.lastError ?: controller.lastError ?: getString(R.string.none)
     }
 
-    private fun renderControls() {
-        val cpuStopped = stressController.state == StressController.State.STOPPED
-        val gpuState = gpuController.state
-        val gpuPermitsCpu = gpuState == GpuController.State.STOPPED ||
-            gpuState == GpuController.State.UNSUPPORTED ||
-            gpuState == GpuController.State.ERROR
-        val cpuConfigurationEnabled = cpuStopped && gpuPermitsCpu
-        val gpuConfigurationEnabled = cpuStopped && gpuState == GpuController.State.STOPPED
-
-        startButton.isEnabled = nativeAvailable && cpuConfigurationEnabled
-        startGpuButton.isEnabled = nativeAvailable && gpuConfigurationEnabled &&
-            gpuController.info?.supported == true
-        stopGpuButton.isEnabled = gpuState == GpuController.State.STARTING ||
-            gpuState == GpuController.State.RUNNING ||
-            gpuState == GpuController.State.ERROR
-        stopButton.isEnabled = stressController.state == StressController.State.STARTING ||
-            stressController.state == StressController.State.RUNNING ||
-            stopGpuButton.isEnabled
-
-        configurationPanel.alpha = if (cpuConfigurationEnabled) 1.0f else 0.55f
-        cpuLoadGroup.isEnabled = cpuConfigurationEnabled
-        ramTargetGroup.isEnabled = cpuConfigurationEnabled
-        for (index in 0 until cpuLoadGroup.childCount) {
-            cpuLoadGroup.getChildAt(index).isEnabled = cpuConfigurationEnabled
+    private fun renderConfigurationPreview() {
+        if (!::durationSpinner.isInitialized || durationSpinner.adapter == null) return
+        val configuration = configurationFromControls()
+        val availableBytes = lastSnapshot?.memory?.availableBytes ?: 0L
+        if (controller.state == CombinedStressState.IDLE) {
+            sessionPresetValue.text = configuration.preset.name
+            sessionDurationValue.text = configuration.duration.displayLabel
+            cpuTargetValue.text = "${configuration.cpuTargetPercent}%"
+            gpuTargetValue.text = "${configuration.gpuTargetPercent}%"
+            stressTargetValue.text = formatMemoryTarget(configuration.memoryTarget, availableBytes)
         }
-        for (index in 0 until ramTargetGroup.childCount) {
-            ramTargetGroup.getChildAt(index).isEnabled = cpuConfigurationEnabled
-        }
-
-        gpuConfigurationPanel.alpha = 1.0f
-        gpuLoadGroup.alpha = if (gpuConfigurationEnabled) 1.0f else 0.55f
-        gpuLoadGroup.isEnabled = gpuConfigurationEnabled
-        for (index in 0 until gpuLoadGroup.childCount) {
-            gpuLoadGroup.getChildAt(index).isEnabled = gpuConfigurationEnabled
-        }
-    }
-
-    private fun renderGlobalState() {
-        val cpuState = stressController.state
-        val gpuState = gpuController.state
-        val label = when {
-            gpuState == GpuController.State.ERROR -> "ERROR"
-            cpuState == StressController.State.STARTING ||
-                gpuState == GpuController.State.STARTING -> "STARTING"
-            cpuState == StressController.State.RUNNING ||
-                gpuState == GpuController.State.RUNNING -> "RUNNING"
-            cpuState == StressController.State.STOPPING ||
-                gpuState == GpuController.State.STOPPING -> "STOPPING"
-            else -> "STOPPED"
-        }
-        statusValue.text = label
-        statusValue.setTextColor(
-            when (label) {
-                "RUNNING" -> getColor(R.color.safe)
-                "STARTING", "STOPPING" -> getColor(R.color.warning)
-                "ERROR" -> getColor(R.color.danger)
-                else -> getColor(R.color.text_secondary)
+        startButton.setText(
+            if (configuration.preset == StressPreset.EXTREME &&
+                configuration.cpuEnabled && configuration.gpuEnabled &&
+                configuration.memoryEnabled
+            ) {
+                R.string.start_extreme
+            } else {
+                R.string.start_session
             },
         )
     }
 
-    private fun updateGpuMetrics() {
-        if (!nativeAvailable) return
-        val snapshot = gpuController.snapshot()
-        gpuController.reconcileNativeError(snapshot)
-        val activity = gpuActivityMonitor.sample(snapshot)
-        gpuDispatchCountValue.text = snapshot.dispatchCount.toString()
-        gpuDispatchRateValue.text = GpuMetricsFormatter.formatDispatchRate(
-            if (snapshot.status == GpuNativeStatus.RUNNING) activity.dispatchesPerSecond else 0.0,
+    private fun renderState(state: CombinedStressState) {
+        statusValue.text = state.name
+        statusValue.setTextColor(
+            when (state) {
+                CombinedStressState.RUNNING -> getColor(R.color.safe)
+                CombinedStressState.STARTING,
+                CombinedStressState.STOPPING,
+                CombinedStressState.THERMAL_LIMITED,
+                -> getColor(R.color.warning)
+                CombinedStressState.ERROR -> getColor(R.color.danger)
+                CombinedStressState.IDLE -> getColor(R.color.text_secondary)
+            },
         )
-        gpuComputeActivityValue.text = GpuMetricsFormatter.formatWorkGroupRate(
-            if (snapshot.status == GpuNativeStatus.RUNNING) activity.workGroupsPerSecond else 0.0,
-        )
-        gpuWorkTimeValue.text = GpuMetricsFormatter.formatGpuWorkTime(
-            snapshot.gpuWorkNanos,
-            gpuController.info?.timestampSupported == true,
-        )
-        gpuOutputValue.text = GpuMetricsFormatter.formatChecksum(snapshot.outputChecksum)
-        if (snapshot.status == GpuNativeStatus.ERROR) {
-            gpuStatusValue.text = GpuController.State.ERROR.name
-            gpuStatusValue.setTextColor(getColor(R.color.danger))
+        if (state == CombinedStressState.RUNNING) {
+            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        } else {
+            window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         }
+        val canConfigure = state == CombinedStressState.IDLE
+        setEnabledRecursively(configurationPanel, canConfigure)
+        configurationPanel.alpha = if (canConfigure) 1.0f else 0.55f
+        startButton.isEnabled = nativeAvailable && canConfigure
+        stopButton.isEnabled = state == CombinedStressState.STARTING ||
+            state == CombinedStressState.RUNNING ||
+            state == CombinedStressState.THERMAL_LIMITED ||
+            state == CombinedStressState.ERROR
     }
 
-    private fun updateLiveMetrics() {
-        val memory = runCatching { memoryMonitor.sample() }.getOrNull()
-        if (memory != null) {
-            totalRamValue.text = ByteFormatter.formatBytes(memory.totalBytes)
-            availableRamValue.text = ByteFormatter.formatBytes(memory.availableBytes)
-            systemUsedValue.text = ByteFormatter.formatBytes(memory.systemUsedBytes)
-            appPssValue.text = ByteFormatter.formatBytes(memory.appPssBytes)
-            nativePssValue.text = ByteFormatter.formatBytes(memory.nativePssBytes)
-        }
-
-        val cpu = cpuMonitor.sample()
-        appCpuLoadValue.text = String.format(Locale.US, "%.1f%%", cpu.appCpuLoadPercent)
-        coreEquivalentValue.text = String.format(Locale.US, "%.0f%%", cpu.coreEquivalentPercent)
-        threadsValue.text = nativeCpuThreadCount().toString()
-
-        val allocated = nativeAllocatedBytes()
-        val processed = nativeProcessedBytes()
-        allocatedValue.text = ByteFormatter.formatBytes(allocated)
-        memoryActivityValue.text = ByteFormatter.formatRate(memoryActivityMonitor.sample(processed))
-        updateGpuMetrics()
-
-        val thermal = runCatching { deviceMonitor.thermalSnapshot() }.getOrNull()
-        if (thermal != null) {
-            batteryTemperatureValue.text = thermal.batteryTemperatureCelsius?.let {
-                String.format(Locale.US, "%.1f °C", it)
-            } ?: getString(R.string.not_available)
-            thermalStatusValue.text = thermal.statusLabel
-            thermalStatusValue.setTextColor(thermalColor(thermal.status))
-            val isActive = stressController.state == StressController.State.STARTING ||
-                stressController.state == StressController.State.RUNNING ||
-                gpuController.state == GpuController.State.STARTING ||
-                gpuController.state == GpuController.State.RUNNING
-            if (thermal.isSevereOrHigher && isActive && !thermalStopTriggered) {
-                thermalStopTriggered = true
-                stopAll()
-                Toast.makeText(
-                    this,
-                    getString(R.string.thermal_stop, thermal.statusLabel),
-                    Toast.LENGTH_LONG,
-                ).show()
+    private fun setEnabledRecursively(view: View, enabled: Boolean) {
+        view.isEnabled = enabled
+        if (view is ViewGroup) {
+            for (index in 0 until view.childCount) {
+                setEnabledRecursively(view.getChildAt(index), enabled)
             }
         }
-
-        elapsedValue.text = formatElapsedTime()
     }
+
+    private fun formatMemoryTarget(target: MemoryTarget, availableBytes: Long): String {
+        val fixed = target.fixedBytes
+        if (fixed != null) return ByteFormatter.formatBytes(fixed)
+        if (availableBytes <= 0L) return "Auto"
+        val estimated = min(availableBytes / 5L, MAX_AUTO_TARGET_BYTES).floorToMib()
+        return "${ByteFormatter.formatBytes(estimated)} (Auto)"
+    }
+
+    private fun formatElapsed(elapsedMs: Long): String {
+        val totalSeconds = (elapsedMs / 1000L).coerceAtLeast(0L)
+        val hours = totalSeconds / 3600L
+        val minutes = totalSeconds % 3600L / 60L
+        val seconds = totalSeconds % 60L
+        return String.format(Locale.US, "%02d:%02d:%02d", hours, minutes, seconds)
+    }
+
+    private fun formatTemperature(value: Double?): String = value?.let {
+        String.format(Locale.US, "%.1f °C", it)
+    } ?: getString(R.string.not_available)
+
+    private fun formatPercent(value: Double, decimals: Int): String =
+        String.format(Locale.US, if (decimals == 0) "%.0f%%" else "%.1f%%", value)
 
     private fun thermalColor(status: Int): Int = when {
         status >= PowerManager.THERMAL_STATUS_SEVERE -> getColor(R.color.danger)
@@ -563,44 +610,18 @@ class MainActivity : Activity(), StressController.Listener, GpuController.Listen
         else -> getColor(R.color.safe)
     }
 
-    private fun formatElapsedTime(): String {
-        val activeStarts = listOf(cpuMemoryRunStartedAtMs, gpuRunStartedAtMs).filter { it > 0L }
-        if (activeStarts.isEmpty()) return getString(R.string.elapsed_zero)
-        val startedAtMs = activeStarts.minOrNull() ?: return getString(R.string.elapsed_zero)
-        val totalSeconds = ((SystemClock.elapsedRealtime() - startedAtMs) / 1000L)
-            .coerceAtLeast(0L)
-        val hours = totalSeconds / 3600L
-        val minutes = totalSeconds % 3600L / 60L
-        val seconds = totalSeconds % 60L
-        return String.format(Locale.US, "%02d:%02d:%02d", hours, minutes, seconds)
-    }
-
-    private fun nativeCpuThreadCount(): Int = if (nativeAvailable) {
-        runCatching { NativeStress.getCpuStressThreadCount() }.getOrDefault(0)
-    } else {
-        0
-    }
-
-    private fun nativeAllocatedBytes(): Long = if (nativeAvailable) {
-        runCatching { NativeStress.getAllocatedMemoryBytes() }.getOrDefault(0L)
-    } else {
-        0L
-    }
-
-    private fun nativeProcessedBytes(): Long = if (nativeAvailable) {
-        runCatching { NativeStress.getProcessedMemoryBytes() }.getOrDefault(0L)
-    } else {
-        0L
+    private fun resourceColor(state: String): Int = when (state) {
+        "RUNNING" -> getColor(R.color.safe)
+        "STARTING", "STOPPING", "THERMAL_LIMITED" -> getColor(R.color.warning)
+        "ERROR" -> getColor(R.color.danger)
+        else -> getColor(R.color.text_secondary)
     }
 
     private fun Long.floorToMib(): Long = this / MIB * MIB
 
     companion object {
-        private const val MONITOR_INTERVAL_MS = 750L
+        private const val MONITOR_INTERVAL_MS = 1_250L
         private const val MIB = 1024L * 1024L
-        private const val DEFAULT_MEMORY_TARGET_BYTES = 512L * MIB
         private const val MAX_AUTO_TARGET_BYTES = 1536L * MIB
-        private const val MIN_SYSTEM_RESERVE_BYTES = 256L * MIB
-        private const val MIN_NATIVE_TARGET_BYTES = 8L * MIB
     }
 }

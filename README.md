@@ -6,7 +6,7 @@ Android Resource Stress 是一个面向 Android 真机的资源压力工具，�
 
 ## 当前阶段
 
-当前版本为 **Phase 2 / `v0.2.0-phase2`**，在已真机验证的 Phase 1 基础上包含：
+当前版本为 **Phase 3 / `v0.3.0-phase3`**，复用 Phase 1/2 已验证的 native CPU、Memory 和 Vulkan GPU 核心，并提供：
 
 - 设备、系统、CPU 核心数和内存信息
 - C++17 CPU Stress（25% / 50% / 75% / 100% duty cycle）
@@ -17,12 +17,18 @@ Android Resource Stress 是一个面向 Android 真机的资源压力工具，�
 - Vulkan physical device 与 compute capability detection
 - C++17 Vulkan compute stress（25% / 50% / 75% / 100% duty cycle）
 - GPU Dispatch Count/Rate、timestamp Work Time、Workgroups/s 和输出 checksum
-- 独立的 START GPU / STOP GPU，以及全局 STOP ALL
-- 电池温度与 Android Thermal Status
-- Thermal Status 达到 `SEVERE` 或更高时自动停止
-- 明确的 START / STOP 状态机和 Activity 生命周期清理
+- CPU、GPU、Memory 任意一种或任意组合的资源选择
+- BALANCED（50/50/512 MB）、HIGH（75/75/Auto）、EXTREME（100/100/Auto）预设与 Custom 参数
+- 30 秒、1/2/5/10/30 分钟及 Continuous Session Timer
+- Memory → GPU → CPU 有序启动、逐步验证和部分失败全量回滚
+- `IDLE / STARTING / RUNNING / STOPPING / THERMAL_LIMITED / ERROR` 统一状态机
+- 单一 `STOP ALL` 路径、Session 峰值/停止原因与最近一次错误
+- Battery Temp 的 Start / Current / Peak / Delta 与完整 Android Thermal Status
+- `MODERATE` 升温提示；`SEVERE` 或更高状态自动停止所有压力资源
+- RUNNING 时使用 `FLAG_KEEP_SCREEN_ON`，停止后恢复系统屏幕策略
+- 切入后台立即停止，不使用 CPU WakeLock 或后台服务
 
-本阶段不包含 Storage、NPU、综合跑分或 Phase 3 Extreme 联合模式。
+本阶段不包含 Storage Stress、NPU Stress、综合跑分、排行榜或云端服务。
 
 ## 架构
 
@@ -30,9 +36,11 @@ Android Resource Stress 是一个面向 Android 真机的资源压力工具，�
 app/src/main/
 ├── AndroidManifest.xml
 ├── java/com/androidresourcestress/
-│   ├── MainActivity.kt          # 原生 View UI、刷新循环、生命周期
-│   ├── StressController.kt      # START/STOP 并发状态机
-│   ├── GpuController.kt         # 独立 GPU 状态机与异步控制
+│   ├── MainActivity.kt          # 原生 View Dashboard、参数选择、状态观察
+│   ├── CombinedStressController.kt # 统一状态机、资源生命周期、热保护
+│   ├── StressSession.kt         # 配置、Duration、Session 与 StopReason
+│   ├── StressController.kt      # Phase 1 控制器（核心回归保留）
+│   ├── GpuController.kt         # Phase 2 控制器（核心回归保留）
 │   ├── GpuMonitor.kt            # Vulkan capability 与 activity 格式化
 │   ├── NativeStress.kt          # 集中的 JNI 接口
 │   ├── DeviceMonitor.kt         # 设备、电池温度、Thermal Status
@@ -50,7 +58,15 @@ app/src/main/
 └── res/                         # XML 布局、主题和 Launcher 图标
 ```
 
-应用启动只加载 native library、读取监控数据并检测 Vulkan 能力。CPU/GPU worker、压力内存和 64 MB GPU storage buffer 只会在用户主动点击对应 START 后创建。
+应用启动只加载 native library、读取监控数据并检测 Vulkan 能力。CPU/GPU worker、压力内存和 64 MB GPU storage buffer 只会在用户主动点击 START 后创建。MainActivity 不分别管理 native 状态；所有组合都由 `CombinedStressController` 拥有一个 Session，并通过同一个停止路径释放。
+
+## Extreme Combined Mode
+
+默认 EXTREME 会选择 CPU + GPU + Memory，并设置 CPU/GPU Target 为 100%、Memory 为 Auto-safe、Duration 为 5 分钟。用户可以单独关闭资源，支持 CPU-only、GPU-only、Memory-only、CPU+GPU、CPU+Memory、GPU+Memory 和三项全开共七种组合。手动改变资源或 Target 后预设显示为 CUSTOM。
+
+联合启动先检查 Thermal、Android `lowMemory` 和 Vulkan Compute capability，然后严格按 Memory → GPU → CPU 启动并验证 native 状态。任一步失败都会进入 ERROR，停止并释放已启动的所有模块，再回到 IDLE，不会留下半运行状态。用户停止、计时结束、严重热状态、Activity 进入后台和运行时错误也都调用相同的 `stopAll()`。
+
+Session 仅保存在内存中，记录配置、开始和经过时间、CPU/Core Equivalent、App/Native PSS、Memory Activity、GPU Dispatch Rate、电池温度和最高 Thermal Status 的峰值，以及 `USER`、`DURATION_COMPLETED`、`THERMAL`、`ACTIVITY_STOPPED` 或 `RESOURCE_ERROR` 停止原因。
 
 ## CPU Stress
 
@@ -65,7 +81,7 @@ Core Equivalent = delta process CPU time / delta wall time × 100
 App CPU Load     = Core Equivalent / logical CPU core count
 ```
 
-因此 8 个核心接近全满时，Core Equivalent 约为 800%，App CPU Load 约为 100%。该指标只代表本 App，不代表 System CPU Usage。
+因此 8 个核心接近全满时，Core Equivalent 约为 800%，App CPU Load 约为 100%。该指标只代表本 App，不代表 System CPU Usage。在 Combined Mode 中，App CPU Load 包含 CPU stress、Memory worker、GPU submission、UI 和 monitor 线程的总 CPU 时间；CPU Target 仅控制 CPU stress worker 的 duty cycle，两者不是同一个含义。
 
 ## Memory Stress
 
@@ -79,7 +95,7 @@ Auto 目标为：
 min(Available RAM × 20%, 1536 MB)
 ```
 
-目标按 MiB 向下对齐。Android 报告 `lowMemory` 时拒绝启动；固定档位也必须保留至少系统 low-memory threshold 或 256 MB（取较大值）。部分 native 分配失败会保留已成功的实际分配量并继续安全运行，不会越界或 double free。
+目标按 MiB 向下对齐。Android 报告 `lowMemory` 时拒绝启动；固定档位也会限制在安全可用范围。分配期间每个 8 MB block 都重新读取 `MemAvailable`，至少保留系统 low-memory threshold 或 256 MB（取较大值）。安全阈值或部分 native 分配失败可使实际 Allocated 小于 Target；界面始终显示真实分配量，不会为了凑满目标冒险 OOM。
 
 ## Vulkan GPU Stress
 
@@ -91,14 +107,17 @@ STOP GPU 会 join native worker 并释放 buffer、memory、pipeline、descripto
 
 ## 安全与生命周期
 
-- 首次打开始终是 CPU `STOPPED`、Memory `STOPPED`、GPU `STOPPED` 或 `UNSUPPORTED`。
+- 首次打开处于全局 `IDLE`，CPU/Memory 为 `OFF`，GPU 为 `STOPPED` 或 `UNSUPPORTED`。
 - native library 加载不会自动启动 worker 或申请压力内存。
 - START 在后台控制线程执行，不阻塞 Android 主线程。
-- STOP ALL 设置原子取消标志，等待 CPU/memory/GPU worker `join`，再释放全部压力资源。
-- 重复 START、重复 STOP 和快速 START/STOP 由 generation + latch 状态机收敛到单一安全状态。
-- `Activity.onStop()` 和 `onDestroy()` 都会触发清理；Phase 2 不允许后台持续施压。
+- STOP ALL 先停止并 join CPU，再等待并清理 GPU queue/worker，最后停止 Memory worker 并 `munmap` 全部分配。
+- 重复 START、重复 STOP 和快速 START/STOP 由 generation + 单线程控制队列收敛到单一安全状态。
+- `Activity.onStop()` 和 `onDestroy()` 都会触发清理；Phase 3 不允许后台持续施压。
 - Thermal Status 达到 `SEVERE`、`CRITICAL`、`EMERGENCY` 或 `SHUTDOWN` 时自动 STOP。
-- 高负载会快速增加耗电与温度。请保持设备通风，并使用 STOP 随时结束测试。
+- Continuous 只取消计时限制，不会取消 Thermal Protection。
+- Battery Temp 来自 Android 电池广播，不是 CPU 或 SoC 温度；GPU Target 也不是系统 GPU utilization。
+
+高负载测试可能导致快速耗电、设备明显发热、系统降频或应用被系统终止。工具提供 Thermal Protection，但用户仍应保持散热区域无遮挡，不要在高温环境中长时间运行，不要在充电时长时间运行 EXTREME，也不要主动绕过 Thermal Protection。
 
 ## 构建环境
 
@@ -148,7 +167,7 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 ## GitHub Release
 
-从 `v0.2.0-phase2` 开始，push `v*` tag 会触发 `.github/workflows/release-apk.yml`。workflow 使用 JDK 17 和固定 Android/NDK/CMake 版本重新构建，并在同名 GitHub Release 中发布：
+push 任意 `v*` tag 会触发 `.github/workflows/release-apk.yml`。workflow 使用 JDK 17 和固定 Android/NDK/CMake 版本重新构建，并从 Git tag 自动生成文件名，在同名 GitHub Release 中发布：
 
 ```text
 android-resource-stress-<tag>-debug.apk
@@ -157,9 +176,6 @@ SHA256SUMS.txt
 
 普通 branch push 不会创建 Release，APK 二进制也不会提交进 Git 仓库。
 
-## Roadmap
+## 后续范围
 
-- **Phase 3**：CPU + GPU + RAM Extreme 联合负载、增强稳定性和热保护
-- **Phase 4**：Storage、产品化 UI、日志、Release 和完整文档
-
-Roadmap 中的功能尚未在 Phase 2 提前实现。
+Storage、NPU、产品化跑分、排行榜和云端能力不属于 Phase 3，本版本不会提前实现这些功能。

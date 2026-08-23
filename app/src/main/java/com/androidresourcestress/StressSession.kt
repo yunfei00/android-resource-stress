@@ -1,0 +1,91 @@
+package com.androidresourcestress
+
+enum class CombinedStressState {
+    IDLE,
+    STARTING,
+    RUNNING,
+    STOPPING,
+    THERMAL_LIMITED,
+    ERROR,
+}
+
+enum class StressPreset {
+    BALANCED,
+    HIGH,
+    EXTREME,
+    CUSTOM,
+}
+
+enum class MemoryTarget(val fixedBytes: Long?) {
+    MIB_256(256L * 1024L * 1024L),
+    MIB_512(512L * 1024L * 1024L),
+    GIB_1(1024L * 1024L * 1024L),
+    AUTO(null),
+}
+
+enum class StressDuration(val durationMs: Long, val displayLabel: String) {
+    SECONDS_30(30_000L, "30 seconds"),
+    MINUTE_1(60_000L, "1 minute"),
+    MINUTES_2(120_000L, "2 minutes"),
+    MINUTES_5(300_000L, "5 minutes"),
+    MINUTES_10(600_000L, "10 minutes"),
+    MINUTES_30(1_800_000L, "30 minutes"),
+    CONTINUOUS(0L, "Continuous"),
+}
+
+enum class StopReason {
+    USER,
+    DURATION_COMPLETED,
+    THERMAL,
+    ACTIVITY_STOPPED,
+    RESOURCE_ERROR,
+}
+
+data class CombinedStressConfiguration(
+    val preset: StressPreset,
+    val cpuEnabled: Boolean,
+    val gpuEnabled: Boolean,
+    val memoryEnabled: Boolean,
+    val cpuTargetPercent: Int,
+    val gpuTargetPercent: Int,
+    val memoryTarget: MemoryTarget,
+    val duration: StressDuration,
+)
+
+data class StressSessionSnapshot(
+    val sessionId: Long,
+    val startWallTimeMs: Long,
+    val elapsedTimeMs: Long,
+    val configuration: CombinedStressConfiguration,
+    val resolvedMemoryTargetBytes: Long,
+    val allocatedMemoryBytes: Long,
+    val peakCpuLoadPercent: Double,
+    val peakCoreEquivalentPercent: Double,
+    val peakAppPssBytes: Long,
+    val peakNativePssBytes: Long,
+    val peakMemoryActivityBytesPerSecond: Double,
+    val peakDispatchRate: Double,
+    val startBatteryTemperatureCelsius: Double?,
+    val peakBatteryTemperatureCelsius: Double?,
+    val highestThermalStatus: Int,
+    val stopReason: StopReason?,
+    val lastError: String?,
+)
+
+data class CombinedRuntimeSnapshot(
+    val state: CombinedStressState,
+    val elapsedTimeMs: Long,
+    val currentSession: StressSessionSnapshot?,
+    val lastSession: StressSessionSnapshot?,
+    val cpuLoadPercent: Double,
+    val coreEquivalentPercent: Double,
+    val cpuThreadCount: Int,
+    val memory: MemorySnapshot,
+    val allocatedMemoryBytes: Long,
+    val memoryActivityBytesPerSecond: Double,
+    val gpu: GpuSnapshot,
+    val gpuDispatchRate: Double,
+    val gpuWorkGroupsPerSecond: Double,
+    val thermal: ThermalSnapshot,
+    val lastError: String?,
+)
