@@ -1,8 +1,8 @@
 # Android Resource Stress
 
-Android Resource Stress 是一个完全离线运行的 Android 真机资源压力、热稳定性和工程观测工具。它主动调动 CPU、Vulkan GPU、内存和可选的 app-private Storage I/O；它不是 Benchmark，不计算综合分数，也没有排行榜、云服务或后台烧机。
+Android Resource Stress 是一个完全离线运行的 Android 真机资源压力、热稳定性和工程观测工具。它主动调动 CPU、Vulkan GPU、内存和可选的 app-private Storage I/O；它不是 Benchmark，不计算综合分数，也没有排行榜或云服务。
 
-当前 Phase 版本为 `0.4.0` / `v0.4.0-phase4`。
+当前版本为 `0.5.0` / `v0.5.0`。Phase 4 的产品化能力全部保留；本次增量升级聚焦 GPU Stress V2、Foreground Service、Screen-Off 和 UI V2，不称为 Phase 5。
 
 ## Purpose
 
@@ -11,8 +11,8 @@ Android Resource Stress 是一个完全离线运行的 Android 真机资源压�
 ## Features
 
 - Native C++17 CPU Stress：25% / 50% / 75% / 100% duty cycle
-- Vulkan Compute GPU Stress：真实 compute pipeline、bounded submission、timestamp query
-- Vulkan Visual GPU Stress：独立 graphics pipeline、离屏 fragment workload、前台动态场景和实际 FPS
+- Vulkan Compute GPU Stress：启动校准、3 个 bounded in-flight batch、timestamp query
+- Vulkan Visual GPU Stress：专用近全屏页面、SurfaceView / ANativeWindow / Vulkan swapchain 和实际 FPS
 - GPU Compute / Visual / Mixed 模式
 - Native Memory Stress：256 MB / 512 MB / 1 GB / Auto-safe
 - Storage READ / WRITE / MIXED：128 / 256 / 512 MB app-private working set
@@ -23,16 +23,17 @@ Android Resource Stress 是一个完全离线运行的 Android 真机资源压�
 - 中英文资源国际化、跟随系统语言和手动语言持久化
 - Session Result、最近 20/30/50 条 History、JSON 和 Diagnostic Log 导出
 - Device Information、Settings、FileProvider + Android ACTION_SEND
+- 用户显式 START 后由 Foreground Service 持有 Session，支持 Home / Screen Off 后继续
 
 ## Quick Start
 
 1. 在 Dashboard 选择 Preset、资源、GPU 模式、目标和 Duration。
 2. Storage 默认关闭；首次启用时阅读 Flash wear 提示。
-3. 点击 START。`STARTING`/`RUNNING` 期间不能重复启动；STOP ALL 走统一释放路径。
+3. 选择亮屏或灭屏测试，点击 START。`STARTING`/`RUNNING` 期间不能重复启动；STOP ALL 与通知栏 STOP 走统一释放路径。
 4. 观察资源活动、CPU/GPU 频率能力、Thermal、传感器和电池侧指标。
 5. Session 完成后查看 Recent Result、Thermal Timeline、History 或导出 JSON。
 
-进入后台会立即停止全部压力资源。Continuous 只取消时长限制，不会取消 CRITICAL+ Thermal Protection。
+Home、打开其他 App 或 Activity recreate 只会让 UI detach，不结束已经显式启动的 Session。Continuous 只取消时长限制，不会取消 CRITICAL+ Thermal Protection。整个 App 进程真正重启后仍默认 `IDLE`，绝不会偷偷恢复压力。
 
 ## CPU Stress
 
@@ -47,19 +48,33 @@ App CPU Load     = Core Equivalent / logical CPU count
 
 ## GPU Compute Stress
 
-GLSL compute shader 在构建时由 NDK `glslc` 编译并嵌入 native library。worker 重复处理 64 MB storage buffer，执行 FP32/向量读写和 checksum 回读。可复用 command buffer 与 fence 保证最多一个 submission in flight；支持时由 timestamp query 报告 GPU Work Time。
+GLSL compute shader 在构建时由 NDK `glslc` 编译并嵌入 native library。worker 重复处理 64 MB storage buffer并执行 FP32/向量读写。启动时用 Vulkan timestamp（不支持时使用 CPU wall-clock fallback）最多三轮调整 workgroup / repetition，目标主要 batch 约 8～20 ms。steady state 使用 3 个可复用 command buffer/fence 的 bounded in-flight ring：等待最老 batch 后立即补交该 slot，不使用 `vkQueueWaitIdle()` 形成逐 batch 队列空洞。只有资源释放使用 `vkDeviceWaitIdle()`。
 
 GPU Target 是 workload duty-cycle，不是硬件 GPU utilization。Dispatch Rate 绝不会换算成伪造的利用率。
 
 ## GPU Visual Stress
 
-Visual 使用独立 Vulkan graphics pipeline 对 640×640 离屏 render target 执行受控 fragment workload；前台 `GpuVisualStressView` 提供 mesh、rotation、lighting-like glow 和 particles 动态反馈，并从 Choreographer 帧时间计算实际 FPS/Frame Time。
+Visual 使用专用 `GpuVisualActivity`。约 80%～90% 屏幕是实际 Vulkan 输出：`SurfaceView` 的 Surface 经 `ANativeWindow` 创建 Android Vulkan surface、FIFO swapchain、render pass、同步对象和持续 procedural fragment scene。用户看到的动画本身就是实时 graphics workload，不是视频、Canvas 假动画或 decoder 负载；底部只保留 FPS、Frame Time、Elapsed、Thermal 和 STOP。
 
 - `Compute`：已有 Vulkan Compute
-- `Visual`：Vulkan graphics workload + 可见动态场景
-- `Mixed`：Compute + Vulkan graphics + 可见动态场景
+- `Visual`：onscreen Vulkan graphics；Surface 不可用时自动切 Compute fallback
+- `Mixed`：Vulkan Compute + onscreen Vulkan graphics
 
-Visual View 与 native renderer 都在 STOP、`onStop()` 和销毁时停止。FPS 是本应用可视 View 的实际帧指标，不是综合跑分。
+Visual Surface 在 Activity `onStop()` / Surface destroy 时停止，Service Session 不停止。Mixed 的 Compute 从不因 Surface 生命周期重启；Visual-only 在不可见/灭屏期间切换到 Compute，Surface 恢复后停止 fallback 并恢复 Visual。Phase 4 的 bounded offscreen graphics backend 仍保留，但 v0.5 可见场景不会与它重复叠加。FPS 是 swapchain 实际呈现指标，不是综合跑分。
+
+## Background and Screen-Off
+
+`StressForegroundService` 独占 `CombinedStressController`、Session timer、Thermal protection 和各资源生命周期；Stress / Monitor / Visual Activity 只 bind/observe。Android 14+ 使用声明完整的 `specialUse` Foreground Service，常驻通知展示 Preset、Elapsed、Thermal，并提供 Open / Stop。
+
+Session RUNNING 时持有非引用计数的 `PARTIAL_WAKE_LOCK`，任何 STOP、失败和 Service destroy 都释放。灭屏模式在资源成功进入 RUNNING 后显示 3 秒倒计时；普通 App 没有安全的公共自动熄屏 API，因此明确提示用户手动关屏，不申请 Device Admin、Device Owner、root，也不修改 Screen Timeout。
+
+```text
+CPU / Memory / Storage / GPU Compute  screen off 后继续
+Mixed                                  Visual pause，Compute 继续
+Visual-only                             Compute fallback；亮屏并恢复 Surface 后回到 Visual
+```
+
+Duration、CRITICAL+ 或资源错误结束灭屏 Session 时，App 使用普通 Android wake capability best-effort 点亮显示；失败时以完成通知兜底，不尝试自动解锁。
 
 ## Memory Stress
 
@@ -129,11 +144,11 @@ Qualcomm/MediaTek backend 当前负责 vendor discovery 和可用节点框架。
 
 ## Session History
 
-Session 以向后兼容的版本化 JSON 保存于 app-private files。默认保留最近 30 条，Settings 可选 20/30/50。内容包含配置、资源峰值、Thermal Timeline、CPU policy frequency 起始/最低/峰值/结束、电池侧 power observation 和停止原因。
+Session 以向后兼容的版本化 JSON 保存于 app-private files。默认保留最近 30 条，Settings 可选 20/30/50。内容包含配置、资源峰值、Thermal Timeline、CPU policy frequency 起始/最低/峰值/结束、电池侧 power observation、停止原因，以及 screen mode/off duration/transitions/fallback/wake 和稀疏 Session Event Timeline。旧 Phase 4 schema 缺失字段时使用安全默认值。
 
 ## Export
 
-结果 JSON 顶层包含 `app`、`device`、`session`、`cpu`、`gpu`、`memory`、`storage`、`thermal`、`cpuFrequencies` 和 `power`。文件写入 `cacheDir/exports`，由非导出、只读 ContentProvider 通过 ACTION_SEND 临时授权。
+结果 JSON 顶层包含 `app`、`device`、`session`、`screen`、`cpu`、`gpu`、`memory`、`storage`、`thermal`、`cpuFrequencies` 和 `power`。文件写入 `cacheDir/exports`，由非导出、只读 ContentProvider 通过 ACTION_SEND 临时授权。
 
 Diagnostic Log 只记录 App start、Root/capability detection、Session/resource start、Thermal change、warning/error 和 stop，不读取系统 logcat，也不记录 worker loop。
 
@@ -166,18 +181,19 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 push `v*` Tag 会触发唯一的 `.github/workflows/release-apk.yml`，生成：
 
 ```text
-android-resource-stress-v0.4.0-phase4-debug.apk
+android-resource-stress-v0.5.0-debug.apk
 SHA256SUMS.txt
 ```
 
 ## Architecture
 
-Dashboard/页面只负责配置与显示；`CombinedStressController` 独占压力状态机；`HardwareMonitorService` 缓存工程快照；Session persistence/export/diagnostic 与压力核心分离。详见 [`docs/architecture.md`](docs/architecture.md)。
+Stress / Monitor / History 页面只负责配置与显示；`StressForegroundService` 持有 `CombinedStressController` 和当前 Session；`HardwareMonitorService` 缓存工程快照；Session persistence/export/diagnostic 与压力核心分离。详见 [`docs/architecture.md`](docs/architecture.md)。
 
 ## Safety
 
-- 启动和进程恢复始终 IDLE；不后台自动施压。
-- `onStop()`、用户 STOP、Duration、资源错误、CRITICAL+ 统一 STOP ALL。
+- 只有用户显式 START 才施压；后台延续仅适用于已开始的 Session，进程重启始终 IDLE。
+- Activity `onStop()` 只 detach UI / pause Visual Surface；用户 STOP、Duration、资源错误和 CRITICAL+ 才统一 STOP ALL。
+- Screen-Off 使用 PARTIAL_WAKE_LOCK，并在所有停止/异常路径释放；自动屏幕控制仅为 capability-dependent best effort。
 - Thermal Protection 永远开启，不提供绕过入口。
 - Memory 保留安全 RAM；Storage 保留 2 GiB 且最多取可用空间 10%。
 - GPU command submission 有界；Visual/Compute worker 均可停止并 join。
@@ -191,8 +207,9 @@ Dashboard/页面只负责配置与显示；`CombinedStressController` 独占压�
 - sysfs 节点可能受 SELinux/厂商权限限制；不可读时显示 Unsupported/Unavailable/Unknown。
 - Performance values are activity indicators, not benchmark scores。
 - `NPU Stress: Planned / Not implemented`。本版本没有 QNN、HTP、MediaTek APU、NeuroPilot、NPU workload/utilization/benchmark。
-- Debug Phase Release 不是应用商店正式签名产物。
+- Debug Release 不是应用商店正式签名产物。
+- 本版本不实现 DDR frequency/lock/control，也不做 Qualcomm/MediaTek 私有 BSP 深度适配。
 
 ## Roadmap
 
-Phase 4 完成后先由用户真机体验确认，再决定是否 promotion 为 `v1.0.0`。Qualcomm/MediaTek Root 工程监控和 NPU 适配后续按真实公司设备数据单独推进；本阶段不创建 `v1.0.0`。
+v0.5.0 发布后等待用户真机体验反馈。Qualcomm/MediaTek 私有工程监控、DDR 和 NPU 适配仅在后续有真实工程设备与独立范围时考虑；本版本不创建 `v1.0.0`。

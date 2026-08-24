@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.5.0 — GPU / Background / Screen-Off / UI Upgrade
+
+- GPU Stress V2：三轮启动校准、3 个 bounded in-flight Compute batch，移除 steady-state 全队列 idle。
+- 增加专用近全屏 Visual 页面和 SurfaceView / ANativeWindow / Vulkan swapchain 实时场景。
+- Mixed 使用持续 Compute + onscreen graphics；Surface detach 后 Compute 不停止或重启。
+- 增加持有整个 Session 的 `StressForegroundService`、常驻通知 Open/Stop 和 Android 14+ `specialUse` 声明。
+- Home / Activity recreate 不再停止 Session；进程真正重启仍安全回到 IDLE。
+- 增加 Screen On/Off 测试、`PARTIAL_WAKE_LOCK`、Visual-only Compute fallback 和 best-effort wake。
+- Session schema 增加 screen/wake 字段与稀疏 Event Timeline，并兼容旧 Phase 4 数据。
+- 首页升级为无需纵向滚动的紧凑 2×2 Dashboard，增加 Stress / Monitor / History 导航和详细 Monitor 页。
+- 保留并回归 Storage、Thermal Timeline、History、Export、Diagnostic、Device Info、Settings 和中英文/跟随系统。
+
 ## v0.4.0-phase4 — Final Productization
 
 - 增加 English / 简体中文正规资源国际化、Follow System 和持久化手动语言选择。
