@@ -64,7 +64,7 @@ class GpuVisualStressView @JvmOverloads constructor(
         running = true
         startNanos = SystemClock.elapsedRealtimeNanos()
         lastFrameNanos = 0L
-        fpsWindowStartedNanos = startNanos
+        fpsWindowStartedNanos = 0L
         fpsWindowFrames = 0L
         renderedFrames = 0L
         measuredFps = 0.0
@@ -97,6 +97,7 @@ class GpuVisualStressView @JvmOverloads constructor(
             }
         }
         lastFrameNanos = frameTimeNanos
+        if (fpsWindowStartedNanos == 0L) fpsWindowStartedNanos = frameTimeNanos
         renderedFrames += 1L
         fpsWindowFrames += 1L
         val windowNanos = frameTimeNanos - fpsWindowStartedNanos

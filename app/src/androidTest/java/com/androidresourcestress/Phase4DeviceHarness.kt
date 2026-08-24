@@ -71,6 +71,7 @@ class Phase4DeviceHarness : Instrumentation(), CombinedStressController.Listener
                 "localizationUi" -> exerciseLocalizationUi()
                 "hardware" -> exerciseHardwareMonitor()
                 "visualUi" -> exerciseVisualUi()
+                "visualLifecycle" -> exerciseVisualLifecycle()
                 "history" -> exerciseHistory()
                 "exportValidation" -> exerciseExportValidation()
                 "diagnosticExport" -> {
@@ -377,6 +378,45 @@ class Phase4DeviceHarness : Instrumentation(), CombinedStressController.Listener
                 "fps=${String.format(Locale.US, "%.1f", visual.framesPerSecond)}",
                 "frameTimeMs=${String.format(Locale.US, "%.2f", visual.frameTimeNanos / 1_000_000.0)}",
                 "animation=PASS stop=PASS",
+            )
+        } finally {
+            runOnMainSync { activity.finish() }
+        }
+    }
+
+    private fun exerciseVisualLifecycle(): List<String> {
+        val activity = startActivitySync(
+            Intent(targetContext, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+        ) as MainActivity
+        return try {
+            SystemClock.sleep(1_500L)
+            runOnMainSync {
+                activity.findViewById<CheckBox>(R.id.resourceCpu).isChecked = false
+                activity.findViewById<CheckBox>(R.id.resourceGpu).isChecked = true
+                activity.findViewById<CheckBox>(R.id.resourceMemory).isChecked = false
+                activity.findViewById<CheckBox>(R.id.resourceStorage).isChecked = false
+                activity.findViewById<RadioGroup>(R.id.gpuModeGroup).check(R.id.gpuModeVisual)
+                activity.findViewById<Button>(R.id.startButton).performClick()
+            }
+            SystemClock.sleep(5_000L)
+            val beforeStop = activity.findViewById<GpuVisualStressView>(R.id.gpuVisualStressView)
+                .snapshot()
+            check(beforeStop.running && beforeStop.renderedFrames > 0L)
+            runOnMainSync { activity.moveTaskToBack(true) }
+            SystemClock.sleep(3_000L)
+            val afterStop = activity.findViewById<GpuVisualStressView>(R.id.gpuVisualStressView)
+                .snapshot()
+            val nativeStatus = GpuNativeStatus.fromCode(NativeStress.getVisualGpuStressStatus())
+            check(!afterStop.running) { "Visual View remained active after onStop" }
+            check(nativeStatus != GpuNativeStatus.RUNNING) {
+                "Vulkan Visual remained active after onStop: $nativeStatus"
+            }
+            listOf(
+                "framesBeforeOnStop=${beforeStop.renderedFrames}",
+                "viewRunningAfterOnStop=${afterStop.running}",
+                "nativeStatusAfterOnStop=$nativeStatus",
+                "onStopCleanup=PASS",
             )
         } finally {
             runOnMainSync { activity.finish() }
