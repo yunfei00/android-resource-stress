@@ -79,4 +79,37 @@
         <item name="android:textColor">@color/text_primary</item>
         <item name="android:textSize">11sp</item>
     </style>
+
+    <style name="DashboardResourceCard">
+        <item name="android:layout_width">0dp</item>
+        <item name="android:layout_height">0dp</item>
+        <item name="android:minWidth">0dp</item>
+        <item name="android:minHeight">0dp</item>
+        <item name="android:background">@drawable/card_background</item>
+        <item name="android:gravity">center</item>
+        <item name="android:textColor">@color/text_primary</item>
+        <item name="android:textSize">15sp</item>
+        <item name="android:textStyle">bold</item>
+    </style>
+
+    <style name="CompactChoice">
+        <item name="android:layout_width">0dp</item>
+        <item name="android:layout_height">match_parent</item>
+        <item name="android:layout_weight">1</item>
+        <item name="android:minWidth">0dp</item>
+        <item name="android:minHeight">0dp</item>
+        <item name="android:gravity">center</item>
+        <item name="android:textColor">@color/text_primary</item>
+        <item name="android:textSize">11sp</item>
+        <item name="android:buttonTint">@color/accent</item>
+    </style>
+
+    <style name="BottomNavButton">
+        <item name="android:layout_width">0dp</item>
+        <item name="android:layout_height">match_parent</item>
+        <item name="android:layout_weight">1</item>
+        <item name="android:minWidth">0dp</item>
+        <item name="android:textColor">@color/text_primary</item>
+        <item name="android:textSize">12sp</item>
+    </style>
 </resources>

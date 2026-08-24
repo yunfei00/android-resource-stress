@@ -1,5 +1,7 @@
 package com.androidresourcestress
 
+import android.view.Surface
+
 object NativeStress {
     init {
         System.loadLibrary("resource_stress")
@@ -124,6 +126,27 @@ object NativeStress {
 
     @JvmStatic
     external fun getVisualGpuLastError(): String
+
+    @JvmStatic
+    external fun startOnscreenVisual(surface: Surface, targetLoadPercent: Int): Boolean
+
+    @JvmStatic
+    external fun stopOnscreenVisual()
+
+    @JvmStatic
+    external fun isOnscreenVisualRunning(): Boolean
+
+    @JvmStatic
+    external fun getOnscreenVisualFps(): Double
+
+    @JvmStatic
+    external fun getOnscreenVisualFrameTimeNanos(): Long
+
+    @JvmStatic
+    external fun getOnscreenVisualFrameCount(): Long
+
+    @JvmStatic
+    external fun getOnscreenVisualLastError(): String
 
     fun ensureLoaded() = Unit
 }

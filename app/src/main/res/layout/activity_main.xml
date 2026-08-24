@@ -1,423 +1,57 @@
 <?xml version="1.0" encoding="utf-8"?>
-<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
-    android:id="@+id/rootScroll"
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/dashboardRoot"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@color/background"
-    android:fillViewport="true">
+    android:orientation="vertical"
+    android:paddingHorizontal="12dp">
 
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:padding="@dimen/screen_padding">
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:letterSpacing="0.08"
-            android:text="@string/app_title"
-            android:textColor="@color/text_primary"
-            android:textSize="20sp"
-            android:textStyle="bold" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="3dp"
-            android:text="@string/phase_label"
-            android:textColor="@color/text_secondary"
-            android:textSize="11sp" />
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="18dp"
-            android:layout_marginBottom="14dp"
-            android:gravity="center_vertical"
-            android:orientation="horizontal">
-            <TextView
-                android:id="@+id/statusValue"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="@string/status_idle"
-                android:textColor="@color/text_secondary"
-                android:textSize="18sp"
-                android:textStyle="bold" />
-            <TextView
-                android:id="@+id/elapsedValue"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:fontFamily="monospace"
-                android:text="@string/elapsed_zero"
-                android:textColor="@color/text_primary"
-                android:textSize="18sp"
-                android:textStyle="bold" />
-        </LinearLayout>
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="14dp"
-            android:orientation="horizontal">
-            <Button
-                android:id="@+id/historyButton"
-                android:layout_width="0dp"
-                android:layout_height="48dp"
-                android:layout_marginEnd="4dp"
-                android:layout_weight="1"
-                android:text="@string/history" />
-            <Button
-                android:id="@+id/deviceInfoButton"
-                android:layout_width="0dp"
-                android:layout_height="48dp"
-                android:layout_marginHorizontal="4dp"
-                android:layout_weight="1"
-                android:text="@string/device_info" />
-            <Button
-                android:id="@+id/settingsButton"
-                android:layout_width="0dp"
-                android:layout_height="48dp"
-                android:layout_marginStart="4dp"
-                android:layout_weight="1"
-                android:text="@string/settings" />
-        </LinearLayout>
-
-        <LinearLayout style="@style/SectionCard" android:orientation="vertical">
-            <TextView style="@style/SectionTitle" android:text="@string/section_session" />
-            <LinearLayout style="@style/MetricRow">
-                <TextView style="@style/MetricLabel" android:text="@string/label_session_preset" />
-                <TextView android:id="@+id/sessionPresetValue" style="@style/MetricValue" android:text="@string/preset_extreme" />
-            </LinearLayout>
-            <LinearLayout style="@style/MetricRow">
-                <TextView style="@style/MetricLabel" android:text="@string/label_session_duration" />
-                <TextView android:id="@+id/sessionDurationValue" style="@style/MetricValue" android:text="@string/duration_5_minutes" />
-            </LinearLayout>
-            <LinearLayout style="@style/MetricRow">
-                <TextView style="@style/MetricLabel" android:text="@string/label_stop_reason" />
-                <TextView android:id="@+id/sessionStopReasonValue" style="@style/MetricValue" android:text="@string/not_available" />
-            </LinearLayout>
-            <LinearLayout style="@style/MetricRow">
-                <TextView style="@style/MetricLabel" android:text="@string/label_session_peaks" />
-                <TextView android:id="@+id/sessionPeaksValue" style="@style/GpuMetricValue" android:text="@string/waiting" />
-            </LinearLayout>
-            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal">
-                <TextView style="@style/MetricLabel" android:text="@string/label_last_error" />
-                <TextView android:id="@+id/lastErrorValue" style="@style/GpuMetricValue" android:text="@string/none" />
-            </LinearLayout>
-        </LinearLayout>
-
-        <LinearLayout style="@style/SectionCard" android:orientation="vertical">
-            <TextView style="@style/SectionTitle" android:text="@string/section_device" />
-            <include layout="@layout/row_manufacturer" />
-            <include layout="@layout/row_model" />
-            <include layout="@layout/row_android" />
-            <include layout="@layout/row_sdk" />
-            <include layout="@layout/row_abi" />
-            <include layout="@layout/row_cpu_cores" />
-        </LinearLayout>
-
-        <LinearLayout style="@style/SectionCard" android:orientation="vertical">
-            <TextView style="@style/SectionTitle" android:text="@string/section_cpu" />
-            <include layout="@layout/row_cpu_state" />
-            <include layout="@layout/row_cpu_target" />
-            <include layout="@layout/row_app_cpu_load" />
-            <include layout="@layout/row_core_equivalent" />
-            <include layout="@layout/row_threads" />
-            <LinearLayout style="@style/MetricRow">
-                <TextView style="@style/MetricLabel" android:text="@string/label_cpu_frequency" />
-                <TextView android:id="@+id/cpuFrequencyValue" style="@style/GpuMetricValue" android:text="@string/unsupported" />
-            </LinearLayout>
-        </LinearLayout>
-
-        <include layout="@layout/gpu_section" />
-
-        <LinearLayout style="@style/SectionCard" android:orientation="vertical">
-            <TextView style="@style/SectionTitle" android:text="@string/section_memory" />
-            <include layout="@layout/row_memory_state" />
-            <include layout="@layout/row_total_ram" />
-            <include layout="@layout/row_available_ram" />
-            <include layout="@layout/row_system_used" />
-            <include layout="@layout/row_app_pss" />
-            <include layout="@layout/row_native_pss" />
-            <include layout="@layout/row_stress_target" />
-            <include layout="@layout/row_allocated" />
-            <include layout="@layout/row_memory_activity" />
-        </LinearLayout>
-
-        <LinearLayout style="@style/SectionCard" android:orientation="vertical">
-            <TextView style="@style/SectionTitle" android:text="@string/section_thermal" />
-            <LinearLayout style="@style/MetricRow">
-                <TextView style="@style/MetricLabel" android:text="@string/label_thermal_protection" />
-                <TextView android:id="@+id/thermalProtectionValue" style="@style/MetricValue" android:text="@string/active" />
-            </LinearLayout>
-            <include layout="@layout/row_thermal_status" />
-            <LinearLayout style="@style/MetricRow">
-                <TextView style="@style/MetricLabel" android:text="@string/label_highest_sensor" />
-                <TextView android:id="@+id/highestThermalSensorValue" style="@style/GpuMetricValue" android:text="@string/unsupported" />
-            </LinearLayout>
-            <LinearLayout style="@style/MetricRow">
-                <TextView style="@style/MetricLabel" android:text="@string/label_battery_current" />
-                <TextView android:id="@+id/batteryTemperatureValue" style="@style/MetricValue" android:text="@string/not_available" />
-            </LinearLayout>
-            <LinearLayout style="@style/MetricRow">
-                <TextView style="@style/MetricLabel" android:text="@string/label_battery_start" />
-                <TextView android:id="@+id/startTemperatureValue" style="@style/MetricValue" android:text="@string/not_available" />
-            </LinearLayout>
-            <LinearLayout style="@style/MetricRow">
-                <TextView style="@style/MetricLabel" android:text="@string/label_battery_peak" />
-                <TextView android:id="@+id/peakTemperatureValue" style="@style/MetricValue" android:text="@string/not_available" />
-            </LinearLayout>
-            <LinearLayout style="@style/MetricRow">
-                <TextView style="@style/MetricLabel" android:text="@string/label_battery_delta" />
-                <TextView android:id="@+id/deltaTemperatureValue" style="@style/MetricValue" android:text="@string/not_available" />
-            </LinearLayout>
-            <TextView
-                android:id="@+id/thermalMessageValue"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/thermal_normal"
-                android:textColor="@color/text_secondary"
-                android:textSize="13sp" />
-        </LinearLayout>
-
-        <LinearLayout style="@style/SectionCard" android:orientation="vertical">
-            <TextView style="@style/SectionTitle" android:text="@string/section_power" />
-            <LinearLayout style="@style/MetricRow">
-                <TextView style="@style/MetricLabel" android:text="@string/label_battery_level" />
-                <TextView android:id="@+id/batteryLevelValue" style="@style/MetricValue" android:text="@string/unsupported" />
-            </LinearLayout>
-            <LinearLayout style="@style/MetricRow">
-                <TextView style="@style/MetricLabel" android:text="@string/label_charging_state" />
-                <TextView android:id="@+id/chargingStateValue" style="@style/MetricValue" android:text="@string/unknown" />
-            </LinearLayout>
-            <LinearLayout style="@style/MetricRow">
-                <TextView style="@style/MetricLabel" android:text="@string/label_voltage" />
-                <TextView android:id="@+id/batteryVoltageValue" style="@style/MetricValue" android:text="@string/unsupported" />
-            </LinearLayout>
-            <LinearLayout style="@style/MetricRow">
-                <TextView style="@style/MetricLabel" android:text="@string/label_current_raw" />
-                <TextView android:id="@+id/batteryCurrentValue" style="@style/MetricValue" android:text="@string/unsupported" />
-            </LinearLayout>
-            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal">
-                <TextView style="@style/MetricLabel" android:text="@string/label_estimated_battery_power" />
-                <TextView android:id="@+id/batteryPowerValue" style="@style/MetricValue" android:text="@string/unsupported" />
-            </LinearLayout>
-        </LinearLayout>
-
-        <LinearLayout style="@style/SectionCard" android:orientation="vertical">
-            <TextView style="@style/SectionTitle" android:text="@string/section_storage" />
-            <LinearLayout style="@style/MetricRow">
-                <TextView style="@style/MetricLabel" android:text="@string/label_storage_status" />
-                <TextView android:id="@+id/storageStatusValue" style="@style/MetricValue" android:text="@string/status_off" />
-            </LinearLayout>
-            <LinearLayout style="@style/MetricRow">
-                <TextView style="@style/MetricLabel" android:text="@string/label_storage_mode" />
-                <TextView android:id="@+id/storageModeValue" style="@style/MetricValue" android:text="@string/storage_mixed" />
-            </LinearLayout>
-            <LinearLayout style="@style/MetricRow">
-                <TextView style="@style/MetricLabel" android:text="@string/label_storage_working_set" />
-                <TextView android:id="@+id/storageWorkingSetValue" style="@style/MetricValue" android:text="@string/value_zero" />
-            </LinearLayout>
-            <LinearLayout style="@style/MetricRow">
-                <TextView style="@style/MetricLabel" android:text="@string/label_bytes_written" />
-                <TextView android:id="@+id/storageBytesWrittenValue" style="@style/MetricValue" android:text="@string/value_zero" />
-            </LinearLayout>
-            <LinearLayout style="@style/MetricRow">
-                <TextView style="@style/MetricLabel" android:text="@string/label_bytes_read" />
-                <TextView android:id="@+id/storageBytesReadValue" style="@style/MetricValue" android:text="@string/value_zero" />
-            </LinearLayout>
-            <LinearLayout style="@style/MetricRow">
-                <TextView style="@style/MetricLabel" android:text="@string/label_write_activity" />
-                <TextView android:id="@+id/storageWriteActivityValue" style="@style/MetricValue" android:text="@string/value_zero" />
-            </LinearLayout>
-            <LinearLayout style="@style/MetricRow">
-                <TextView style="@style/MetricLabel" android:text="@string/label_read_activity" />
-                <TextView android:id="@+id/storageReadActivityValue" style="@style/MetricValue" android:text="@string/value_zero" />
-            </LinearLayout>
-            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal">
-                <TextView style="@style/MetricLabel" android:text="@string/label_temp_file" />
-                <TextView android:id="@+id/storageTempFileValue" style="@style/MetricValue" android:text="@string/value_zero" />
-            </LinearLayout>
-        </LinearLayout>
-
-        <LinearLayout style="@style/SectionCard" android:orientation="vertical">
-            <TextView style="@style/SectionTitle" android:text="@string/section_recent_result" />
-            <TextView
-                android:id="@+id/resultSummaryValue"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:fontFamily="monospace"
-                android:text="@string/no_results"
-                android:textColor="@color/text_primary"
-                android:textSize="12sp" />
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="10dp"
-                android:orientation="horizontal">
-                <Button
-                    android:id="@+id/exportResultButton"
-                    android:layout_width="0dp"
-                    android:layout_height="48dp"
-                    android:layout_marginEnd="4dp"
-                    android:layout_weight="1"
-                    android:enabled="false"
-                    android:text="@string/export_json" />
-                <Button
-                    android:id="@+id/exportDiagnosticButton"
-                    android:layout_width="0dp"
-                    android:layout_height="48dp"
-                    android:layout_marginStart="4dp"
-                    android:layout_weight="1"
-                    android:text="@string/export_diagnostics" />
-            </LinearLayout>
-        </LinearLayout>
-
-        <LinearLayout android:id="@+id/configurationPanel" style="@style/SectionCard" android:orientation="vertical">
-            <TextView style="@style/SectionTitle" android:text="@string/configuration" />
-            <TextView style="@style/ConfigLabel" android:text="@string/preset" />
-            <RadioGroup
-                android:id="@+id/presetGroup"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginBottom="12dp"
-                android:orientation="horizontal">
-                <RadioButton android:id="@+id/presetBalanced" style="@style/ConfigChoice" android:text="@string/preset_balanced" />
-                <RadioButton android:id="@+id/presetHigh" style="@style/ConfigChoice" android:text="@string/preset_high" />
-                <RadioButton android:id="@+id/presetExtreme" style="@style/ConfigChoice" android:checked="true" android:text="@string/preset_extreme" />
-                <RadioButton android:id="@+id/presetCustom" style="@style/ConfigChoice" android:text="@string/preset_custom" />
-            </RadioGroup>
-
-            <TextView style="@style/ConfigLabel" android:text="@string/resources" />
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginBottom="12dp"
-                android:orientation="horizontal">
-                <CheckBox android:id="@+id/resourceCpu" style="@style/ConfigChoice" android:checked="true" android:text="@string/resource_cpu" />
-                <CheckBox android:id="@+id/resourceGpu" style="@style/ConfigChoice" android:checked="true" android:text="@string/resource_gpu" />
-                <CheckBox android:id="@+id/resourceMemory" style="@style/ConfigChoice" android:checked="true" android:text="@string/resource_memory" />
-                <CheckBox android:id="@+id/resourceStorage" style="@style/ConfigChoice" android:text="@string/resource_storage" />
-            </LinearLayout>
-
-            <TextView style="@style/ConfigLabel" android:text="@string/cpu_load" />
-            <RadioGroup
-                android:id="@+id/cpuLoadGroup"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginBottom="12dp"
-                android:orientation="horizontal">
-                <RadioButton android:id="@+id/cpu25" style="@style/ConfigChoice" android:text="@string/load_25" />
-                <RadioButton android:id="@+id/cpu50" style="@style/ConfigChoice" android:text="@string/load_50" />
-                <RadioButton android:id="@+id/cpu75" style="@style/ConfigChoice" android:text="@string/load_75" />
-                <RadioButton android:id="@+id/cpu100" style="@style/ConfigChoice" android:checked="true" android:text="@string/load_100" />
-            </RadioGroup>
-
-            <TextView style="@style/ConfigLabel" android:text="@string/gpu_workload_level" />
-            <RadioGroup
-                android:id="@+id/gpuLoadGroup"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginBottom="12dp"
-                android:orientation="horizontal">
-                <RadioButton android:id="@+id/gpu25" style="@style/ConfigChoice" android:text="@string/load_25" />
-                <RadioButton android:id="@+id/gpu50" style="@style/ConfigChoice" android:text="@string/load_50" />
-                <RadioButton android:id="@+id/gpu75" style="@style/ConfigChoice" android:text="@string/load_75" />
-                <RadioButton android:id="@+id/gpu100" style="@style/ConfigChoice" android:checked="true" android:text="@string/load_100" />
-            </RadioGroup>
-
-            <TextView style="@style/ConfigLabel" android:text="@string/gpu_mode" />
-            <RadioGroup
-                android:id="@+id/gpuModeGroup"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginBottom="12dp"
-                android:orientation="horizontal">
-                <RadioButton android:id="@+id/gpuModeCompute" style="@style/ConfigChoice" android:checked="true" android:text="@string/gpu_mode_compute" />
-                <RadioButton android:id="@+id/gpuModeVisual" style="@style/ConfigChoice" android:text="@string/gpu_mode_visual" />
-                <RadioButton android:id="@+id/gpuModeMixed" style="@style/ConfigChoice" android:text="@string/gpu_mode_mixed" />
-            </RadioGroup>
-
-            <TextView style="@style/ConfigLabel" android:text="@string/ram_target" />
-            <RadioGroup
-                android:id="@+id/ramTargetGroup"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginBottom="12dp"
-                android:orientation="horizontal">
-                <RadioButton android:id="@+id/ram256" style="@style/ConfigChoice" android:text="@string/ram_256" />
-                <RadioButton android:id="@+id/ram512" style="@style/ConfigChoice" android:text="@string/ram_512" />
-                <RadioButton android:id="@+id/ram1gb" style="@style/ConfigChoice" android:text="@string/ram_1gb" />
-                <RadioButton android:id="@+id/ramAuto" style="@style/ConfigChoice" android:checked="true" android:text="@string/ram_auto" />
-            </RadioGroup>
-
-            <TextView style="@style/ConfigLabel" android:text="@string/storage_mode" />
-            <RadioGroup
-                android:id="@+id/storageModeGroup"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginBottom="12dp"
-                android:orientation="horizontal">
-                <RadioButton android:id="@+id/storageRead" style="@style/ConfigChoice" android:text="@string/storage_read" />
-                <RadioButton android:id="@+id/storageMixed" style="@style/ConfigChoice" android:checked="true" android:text="@string/storage_mixed" />
-                <RadioButton android:id="@+id/storageWrite" style="@style/ConfigChoice" android:text="@string/storage_write" />
-            </RadioGroup>
-
-            <TextView style="@style/ConfigLabel" android:text="@string/storage_level" />
-            <RadioGroup
-                android:id="@+id/storageLevelGroup"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginBottom="4dp"
-                android:orientation="horizontal">
-                <RadioButton android:id="@+id/storageLow" style="@style/ConfigChoice" android:checked="true" android:text="@string/storage_low" />
-                <RadioButton android:id="@+id/storageMedium" style="@style/ConfigChoice" android:text="@string/storage_medium" />
-                <RadioButton android:id="@+id/storageHigh" style="@style/ConfigChoice" android:text="@string/storage_high" />
-            </RadioGroup>
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginBottom="12dp"
-                android:text="@string/storage_warning_short"
-                android:textColor="@color/warning"
-                android:textSize="12sp" />
-
-            <TextView style="@style/ConfigLabel" android:text="@string/duration" />
-            <Spinner
-                android:id="@+id/durationSpinner"
-                android:layout_width="match_parent"
-                android:layout_height="48dp"
-                android:layout_marginBottom="4dp" />
-        </LinearLayout>
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="16dp"
-            android:orientation="horizontal">
-            <Button
-                android:id="@+id/startButton"
-                android:layout_width="0dp"
-                android:layout_height="52dp"
-                android:layout_marginEnd="6dp"
-                android:layout_weight="1"
-                android:background="@drawable/button_primary"
-                android:text="@string/start_extreme"
-                android:textColor="@color/text_primary"
-                android:textStyle="bold" />
-            <Button
-                android:id="@+id/stopButton"
-                android:layout_width="0dp"
-                android:layout_height="52dp"
-                android:layout_marginStart="6dp"
-                android:layout_weight="1"
-                android:background="@drawable/button_stop"
-                android:enabled="false"
-                android:text="@string/stop_all"
-                android:textColor="@color/text_primary"
-                android:textStyle="bold" />
-        </LinearLayout>
+    <LinearLayout android:layout_width="match_parent" android:layout_height="48dp" android:gravity="center_vertical" android:orientation="horizontal">
+        <TextView android:id="@+id/topTitle" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="@string/dashboard_title" android:textColor="@color/text_primary" android:textSize="18sp" android:textStyle="bold" />
+        <Button android:id="@+id/settingsButton" android:layout_width="48dp" android:layout_height="44dp" android:minWidth="0dp" android:text="@string/settings_icon" android:textSize="20sp" />
     </LinearLayout>
-</ScrollView>
+
+    <LinearLayout android:layout_width="match_parent" android:layout_height="72dp" android:background="@drawable/card_background" android:gravity="center_vertical" android:orientation="horizontal" android:padding="12dp">
+        <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical">
+            <TextView android:id="@+id/dashboardState" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/status_idle" android:textColor="@color/text_secondary" android:textSize="16sp" android:textStyle="bold" />
+            <TextView android:id="@+id/dashboardThermal" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="4dp" android:text="@string/thermal_none_label" android:textColor="@color/safe" android:textSize="12sp" />
+        </LinearLayout>
+        <TextView android:id="@+id/dashboardElapsed" android:layout_width="wrap_content" android:layout_height="wrap_content" android:fontFamily="monospace" android:text="@string/zero_duration" android:textColor="@color/text_primary" android:textSize="20sp" android:textStyle="bold" />
+    </LinearLayout>
+
+    <GridLayout android:layout_width="match_parent" android:layout_height="0dp" android:layout_marginTop="8dp" android:layout_weight="1" android:alignmentMode="alignMargins" android:columnCount="2" android:rowCount="2" android:useDefaultMargins="false">
+        <Button android:id="@+id/cpuCard" style="@style/DashboardResourceCard" android:layout_column="0" android:layout_columnWeight="1" android:layout_row="0" android:layout_rowWeight="1" android:layout_marginEnd="4dp" />
+        <Button android:id="@+id/gpuCard" style="@style/DashboardResourceCard" android:layout_column="1" android:layout_columnWeight="1" android:layout_row="0" android:layout_rowWeight="1" android:layout_marginStart="4dp" />
+        <Button android:id="@+id/memoryCard" style="@style/DashboardResourceCard" android:layout_column="0" android:layout_columnWeight="1" android:layout_row="1" android:layout_rowWeight="1" android:layout_marginTop="8dp" android:layout_marginEnd="4dp" />
+        <Button android:id="@+id/storageCard" style="@style/DashboardResourceCard" android:layout_column="1" android:layout_columnWeight="1" android:layout_row="1" android:layout_rowWeight="1" android:layout_marginStart="4dp" android:layout_marginTop="8dp" />
+    </GridLayout>
+
+    <RadioGroup android:id="@+id/compactPresetGroup" android:layout_width="match_parent" android:layout_height="44dp" android:layout_marginTop="8dp" android:orientation="horizontal">
+        <RadioButton android:id="@+id/presetBalanced" style="@style/CompactChoice" android:text="@string/preset_balanced" />
+        <RadioButton android:id="@+id/presetHigh" style="@style/CompactChoice" android:text="@string/preset_high" />
+        <RadioButton android:id="@+id/presetExtreme" style="@style/CompactChoice" android:checked="true" android:text="@string/preset_extreme" />
+        <RadioButton android:id="@+id/presetCustom" style="@style/CompactChoice" android:text="@string/preset_custom" />
+    </RadioGroup>
+
+    <LinearLayout android:layout_width="match_parent" android:layout_height="44dp" android:orientation="horizontal">
+        <TextView android:layout_width="72dp" android:layout_height="match_parent" android:gravity="center_vertical" android:text="@string/duration" android:textColor="@color/text_secondary" android:textSize="13sp" />
+        <Spinner android:id="@+id/compactDuration" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" />
+    </LinearLayout>
+
+    <RadioGroup android:id="@+id/screenModeGroup" android:layout_width="match_parent" android:layout_height="44dp" android:orientation="horizontal">
+        <RadioButton android:id="@+id/screenModeOn" style="@style/CompactChoice" android:checked="true" android:text="@string/screen_test_on" />
+        <RadioButton android:id="@+id/screenModeOff" style="@style/CompactChoice" android:text="@string/screen_test_off" />
+    </RadioGroup>
+
+    <LinearLayout android:layout_width="match_parent" android:layout_height="52dp" android:orientation="horizontal">
+        <Button android:id="@+id/startButton" android:layout_width="0dp" android:layout_height="match_parent" android:layout_marginEnd="4dp" android:layout_weight="1" android:background="@drawable/button_primary" android:text="@string/start_session" android:textColor="@color/text_primary" android:textStyle="bold" />
+        <Button android:id="@+id/stopButton" android:layout_width="0dp" android:layout_height="match_parent" android:layout_marginStart="4dp" android:layout_weight="1" android:background="@drawable/button_stop" android:enabled="false" android:text="@string/stop_all" android:textColor="@color/text_primary" android:textStyle="bold" />
+    </LinearLayout>
+
+    <LinearLayout android:layout_width="match_parent" android:layout_height="52dp" android:layout_marginTop="6dp" android:orientation="horizontal">
+        <Button android:id="@+id/stressNavButton" style="@style/BottomNavButton" android:text="@string/nav_stress" />
+        <Button android:id="@+id/monitorNavButton" style="@style/BottomNavButton" android:text="@string/nav_monitor" />
+        <Button android:id="@+id/historyNavButton" style="@style/BottomNavButton" android:text="@string/nav_history" />
+    </LinearLayout>
+</LinearLayout>

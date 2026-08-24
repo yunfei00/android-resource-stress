@@ -22,6 +22,7 @@ class CombinedStressController(
         fun onGpuInfoAvailable(info: GpuInfo)
         fun onSessionFinished(session: StressSessionSnapshot)
         fun onCombinedError(message: String)
+        fun onSessionStopRequested(reason: StopReason) = Unit
     }
 
     private data class MutableSession(
@@ -57,6 +58,16 @@ class CombinedStressController(
         var peakVisualFps: Double = 0.0,
         var visualFrameTimeTotalNanos: Double = 0.0,
         var visualFrameTimeSampleCount: Long = 0L,
+        var screenOffAtElapsedMs: Long? = null,
+        var screenOnAtElapsedMs: Long? = null,
+        var screenOffDurationMs: Long = 0L,
+        var activeScreenOffStartedElapsedMs: Long? = null,
+        var screenTransitionCount: Int = 0,
+        var screenFallbackUsed: Boolean = false,
+        var wakeAttempted: Boolean = false,
+        var wakeSucceeded: Boolean = false,
+        var wakeReason: String? = null,
+        val eventTimeline: MutableList<SessionEvent> = mutableListOf(),
         var stopReason: StopReason? = null,
         var lastError: String? = null,
     ) {
@@ -101,6 +112,20 @@ class CombinedStressController(
             } else {
                 0.0
             },
+            screenMode = configuration.screenMode,
+            screenOffAtElapsedMs = screenOffAtElapsedMs,
+            screenOnAtElapsedMs = screenOnAtElapsedMs,
+            screenOffDurationMs = screenOffDurationMs + (
+                activeScreenOffStartedElapsedMs?.let { started ->
+                    (nowElapsedTimeMs - startElapsedTimeMs - started).coerceAtLeast(0L)
+                } ?: 0L
+                ),
+            screenTransitionCount = screenTransitionCount,
+            screenFallbackUsed = screenFallbackUsed,
+            wakeAttempted = wakeAttempted,
+            wakeSucceeded = wakeSucceeded,
+            wakeReason = wakeReason,
+            eventTimeline = eventTimeline.toList(),
         )
     }
 
@@ -152,8 +177,12 @@ class CombinedStressController(
     private var closed = false
     private var currentSession: MutableSession? = null
     private var lastSession: StressSessionSnapshot? = null
-    private var pendingStopReason = StopReason.USER
+    private var pendingStopReason = StopReason.USER_STOP
     private var lastLoggedThermalStatus: Int? = null
+    private var visualSurfaceAttached = false
+    private var screenInteractive = true
+    private var computeFallbackActive = false
+    private var gpuTransitioning = false
 
     @Volatile
     private var visualFps = 0.0
@@ -193,7 +222,7 @@ class CombinedStressController(
             generation += 1L
             state = CombinedStressState.STARTING
             lastError = null
-            pendingStopReason = StopReason.USER
+            pendingStopReason = StopReason.USER_STOP
             lastLoggedThermalStatus = null
             visualFps = 0.0
             visualFrameTimeNanos = 0.0
@@ -203,7 +232,7 @@ class CombinedStressController(
         executor.execute { performStart(operationGeneration, configuration) }
     }
 
-    fun stopAll(reason: StopReason = StopReason.USER) {
+    fun stopAll(reason: StopReason = StopReason.USER_STOP) {
         val scheduleStop = synchronized(lock) {
             if (closed || state == CombinedStressState.IDLE) return
             pendingStopReason = higherPriorityReason(pendingStopReason, reason)
@@ -216,6 +245,7 @@ class CombinedStressController(
             }
         }
         if (!scheduleStop) return
+        listener?.onSessionStopRequested(synchronized(lock) { pendingStopReason })
         postState(CombinedStressState.STOPPING)
         executor.execute {
             cleanupNativeResources()
@@ -330,7 +360,7 @@ class CombinedStressController(
         }
 
         when {
-            thermalStop -> triggerThermalStop(thermal.statusLabel)
+            thermalStop -> triggerThermalStop(thermal.status)
             errorToStop != null -> triggerRuntimeError(errorToStop!!)
             durationStop -> stopAll(StopReason.DURATION_COMPLETED)
         }
@@ -371,6 +401,55 @@ class CombinedStressController(
     fun updateVisualMetrics(fps: Double, frameTimeNanos: Double) {
         visualFps = fps.takeIf { it.isFinite() && it >= 0.0 } ?: 0.0
         visualFrameTimeNanos = frameTimeNanos.takeIf { it.isFinite() && it >= 0.0 } ?: 0.0
+    }
+
+    fun setVisualSurfaceAttached(attached: Boolean) {
+        synchronized(lock) { visualSurfaceAttached = attached }
+        executor.execute { updateVisualRuntimeForSurface() }
+    }
+
+    fun recordScreenState(screenOn: Boolean) {
+        synchronized(lock) {
+            screenInteractive = screenOn
+            val session = currentSession ?: return@synchronized
+            val now = SystemClock.elapsedRealtime()
+            val elapsed = (now - session.startElapsedTimeMs).coerceAtLeast(0L)
+            if (!screenOn && session.activeScreenOffStartedElapsedMs == null) {
+                session.screenOffAtElapsedMs = elapsed
+                session.activeScreenOffStartedElapsedMs = elapsed
+                session.screenTransitionCount += 1
+                session.eventTimeline += SessionEvent(elapsed, SessionEventType.SCREEN_OFF)
+            } else if (screenOn && session.activeScreenOffStartedElapsedMs != null) {
+                val started = session.activeScreenOffStartedElapsedMs ?: elapsed
+                session.screenOffDurationMs += (elapsed - started).coerceAtLeast(0L)
+                session.activeScreenOffStartedElapsedMs = null
+                session.screenOnAtElapsedMs = elapsed
+                session.screenTransitionCount += 1
+                session.eventTimeline += SessionEvent(elapsed, SessionEventType.SCREEN_ON)
+            }
+        }
+        executor.execute { updateVisualRuntimeForSurface() }
+    }
+
+    fun recordWakeResult(attempted: Boolean, succeeded: Boolean, reason: String) {
+        synchronized(lock) {
+            val session = currentSession ?: return
+            val elapsed = (SystemClock.elapsedRealtime() - session.startElapsedTimeMs)
+                .coerceAtLeast(0L)
+            session.wakeAttempted = attempted
+            session.wakeSucceeded = succeeded
+            session.wakeReason = reason
+            session.eventTimeline += SessionEvent(
+                elapsed,
+                SessionEventType.SCREEN_WAKE_REQUEST,
+                reason,
+            )
+            session.eventTimeline += SessionEvent(
+                elapsed,
+                SessionEventType.SCREEN_WAKE_RESULT,
+                if (succeeded) "succeeded" else "failed",
+            )
+        }
     }
 
     private fun performStart(
@@ -414,6 +493,7 @@ class CombinedStressController(
                 peakEstimatedBatteryPowerWatts =
                     startHardware.battery.estimatedBatteryPowerWatts,
             )
+            session.eventTimeline += SessionEvent(0L, SessionEventType.SESSION_START)
             startHardware.cpuFrequencies.forEach { policy ->
                 session.cpuFrequencyObservations[policy.policy] =
                     MutableCpuFrequencyObservation(
@@ -474,7 +554,8 @@ class CombinedStressController(
                 ensureStartActive(operationGeneration)
             }
 
-            if (configuration.gpuEnabled && configuration.gpuMode != GpuMode.VISUAL) {
+            val initialComputeRequired = configuration.gpuEnabled
+            if (initialComputeRequired) {
                 val info = gpuInfo ?: initializeGpuAndReadInfo().also { detected ->
                     gpuInfo = detected
                     postToMain { listener?.onGpuInfoAvailable(detected) }
@@ -495,24 +576,20 @@ class CombinedStressController(
                         "target=${configuration.gpuTargetPercent}%",
                 )
                 ensureStartActive(operationGeneration)
-            }
-            if (configuration.gpuEnabled && configuration.gpuMode != GpuMode.COMPUTE) {
-                if (!NativeStress.startVisualGpuStress(configuration.gpuTargetPercent)) {
-                    throw IllegalStateException(
-                        runCatching { NativeStress.getVisualGpuLastError() }
-                            .getOrDefault("Vulkan visual stress could not be started"),
+                if (configuration.gpuMode == GpuMode.VISUAL) {
+                    computeFallbackActive = true
+                    session.screenFallbackUsed = true
+                    session.eventTimeline += SessionEvent(
+                        0L,
+                        SessionEventType.COMPUTE_FALLBACK_STARTED,
+                        if (configuration.screenMode == ScreenMode.OFF) {
+                            "screen-off start"
+                        } else {
+                            "awaiting visual surface"
+                        },
                     )
                 }
-                if (nativeVisualGpuStatus() != GpuNativeStatus.RUNNING) {
-                    throw IllegalStateException("Vulkan visual worker did not enter RUNNING")
-                }
-                logInfo(
-                    "GPU Vulkan visual started: mode=${configuration.gpuMode} " +
-                        "target=${configuration.gpuTargetPercent}%",
-                )
-                ensureStartActive(operationGeneration)
             }
-
             if (configuration.cpuEnabled) {
                 if (!NativeStress.startCpuStress(logicalCoreCount, configuration.cpuTargetPercent)) {
                     throw IllegalStateException("CPU stress workers could not be started")
@@ -546,6 +623,7 @@ class CombinedStressController(
 
     private fun handleStartFailure(operationGeneration: Long, error: Throwable) {
         val message = error.message ?: error.javaClass.simpleName
+        val reason = classifyResourceError(message)
         val shouldHandle = synchronized(lock) {
             if (closed || generation != operationGeneration ||
                 state == CombinedStressState.STOPPING
@@ -555,16 +633,17 @@ class CombinedStressController(
                 state = CombinedStressState.ERROR
                 lastError = message
                 currentSession?.lastError = message
-                currentSession?.stopReason = StopReason.RESOURCE_ERROR
+                currentSession?.stopReason = reason
                 true
             }
         }
         cleanupNativeResources()
         if (!shouldHandle) return
+        listener?.onSessionStopRequested(reason)
         logError("StressSession ERROR: $message")
         postState(CombinedStressState.ERROR)
         postToMain { listener?.onCombinedError(message) }
-        finishCurrentSession(StopReason.RESOURCE_ERROR, message)
+        finishCurrentSession(reason, message)
         val changed = synchronized(lock) {
             if (closed) false else {
                 state = CombinedStressState.IDLE
@@ -574,7 +653,7 @@ class CombinedStressController(
         if (changed) postState(CombinedStressState.IDLE)
     }
 
-    private fun triggerThermalStop(statusLabel: String) {
+    private fun triggerThermalStop(status: Int) {
         val changed = synchronized(lock) {
             if (closed || state != CombinedStressState.RUNNING) {
                 false
@@ -584,9 +663,14 @@ class CombinedStressController(
             }
         }
         if (!changed) return
-        logError("Thermal $statusLabel: stopping all stress resources")
+        val reason = when (status) {
+            PowerManager.THERMAL_STATUS_SHUTDOWN -> StopReason.THERMAL_SHUTDOWN
+            PowerManager.THERMAL_STATUS_EMERGENCY -> StopReason.THERMAL_EMERGENCY
+            else -> StopReason.THERMAL_CRITICAL
+        }
+        logError("Thermal ${thermalStatusLabel(status)}: stopping all stress resources")
         postState(CombinedStressState.THERMAL_LIMITED)
-        stopAll(StopReason.THERMAL)
+        stopAll(reason)
     }
 
     private fun triggerRuntimeError(message: String) {
@@ -598,17 +682,19 @@ class CombinedStressController(
                 state = CombinedStressState.ERROR
                 lastError = message
                 currentSession?.lastError = message
-                currentSession?.stopReason = StopReason.RESOURCE_ERROR
+                currentSession?.stopReason = classifyResourceError(message)
                 true
             }
         }
         if (!changed) return
+        val reason = classifyResourceError(message)
+        listener?.onSessionStopRequested(reason)
         logError("Runtime resource error: $message")
         postState(CombinedStressState.ERROR)
         postToMain { listener?.onCombinedError(message) }
         executor.execute {
             cleanupNativeResources()
-            finishCurrentSession(StopReason.RESOURCE_ERROR, message)
+            finishCurrentSession(reason, message)
             val idle = synchronized(lock) {
                 if (closed) false else {
                     state = CombinedStressState.IDLE
@@ -667,17 +753,18 @@ class CombinedStressController(
             "Memory stress allocation disappeared unexpectedly"
         configuration.memoryEnabled && !nativeMemoryRunning() ->
             "Memory stress worker stopped unexpectedly"
-        configuration.gpuEnabled && configuration.gpuMode != GpuMode.VISUAL &&
+        gpuTransitioning -> null
+        configuration.gpuEnabled && expectsCompute(configuration) &&
             gpu.status == GpuNativeStatus.ERROR ->
             nativeGpuError("GPU worker stopped after a Vulkan error")
-        configuration.gpuEnabled && configuration.gpuMode != GpuMode.VISUAL &&
+        configuration.gpuEnabled && expectsCompute(configuration) &&
             gpu.status != GpuNativeStatus.RUNNING ->
             "GPU stress worker stopped unexpectedly"
-        configuration.gpuEnabled && configuration.gpuMode != GpuMode.COMPUTE &&
+        configuration.gpuEnabled && expectsVisual(configuration) &&
             visualGpuStatus == GpuNativeStatus.ERROR ->
             runCatching { NativeStress.getVisualGpuLastError() }
                 .getOrDefault("Vulkan visual worker stopped after an error")
-        configuration.gpuEnabled && configuration.gpuMode != GpuMode.COMPUTE &&
+        configuration.gpuEnabled && expectsVisual(configuration) &&
             visualGpuStatus != GpuNativeStatus.RUNNING ->
             "Vulkan visual worker stopped unexpectedly"
         configuration.storageEnabled && storage.status == StorageStressStatus.ERROR ->
@@ -693,6 +780,10 @@ class CombinedStressController(
         runCatching { NativeStress.stopVisualGpuStress() }
         runCatching { NativeStress.stopMemoryStress() }
         val finalStorage = runCatching { storageStress.stop() }.getOrNull()
+        synchronized(lock) {
+            computeFallbackActive = false
+            gpuTransitioning = false
+        }
         if (finalStorage != null) {
             synchronized(lock) {
                 currentSession?.let { session ->
@@ -726,6 +817,13 @@ class CombinedStressController(
             val session = currentSession ?: return@synchronized null
             session.stopReason = higherPriorityReason(session.stopReason ?: reason, reason)
             if (error != null) session.lastError = error
+            val elapsed = (SystemClock.elapsedRealtime() - session.startElapsedTimeMs)
+                .coerceAtLeast(0L)
+            session.eventTimeline += SessionEvent(
+                elapsed,
+                SessionEventType.SESSION_STOP,
+                session.stopReason?.name,
+            )
             val snapshot = session.snapshot(SystemClock.elapsedRealtime())
             currentSession = null
             lastSession = snapshot
@@ -822,6 +920,11 @@ class CombinedStressController(
             status = thermal.status,
             batteryTemperatureCelsius = thermal.batteryTemperatureCelsius,
         )
+        session.eventTimeline += SessionEvent(
+            elapsed,
+            SessionEventType.THERMAL_CHANGE,
+            thermal.statusLabel,
+        )
         if (lastLoggedThermalStatus != thermal.status) {
             lastLoggedThermalStatus = thermal.status
             val message = "Thermal changed elapsed=${elapsed}ms status=${thermal.statusLabel} " +
@@ -874,6 +977,80 @@ class CombinedStressController(
         postToMain { listener?.onCombinedStateChanged(newState) }
     }
 
+    private fun expectsCompute(configuration: CombinedStressConfiguration): Boolean =
+        configuration.gpuMode != GpuMode.VISUAL || computeFallbackActive
+
+    private fun expectsVisual(configuration: CombinedStressConfiguration): Boolean =
+        false // The dedicated Activity owns and monitors the onscreen Vulkan Surface.
+
+    fun reportOnscreenVisualError(message: String) {
+        executor.execute { triggerRuntimeError("Vulkan onscreen visual error: $message") }
+    }
+
+    private fun updateVisualRuntimeForSurface() {
+        val configuration = synchronized(lock) {
+            if (closed || state != CombinedStressState.RUNNING) return
+            currentSession?.configuration ?: return
+        }
+        if (!configuration.gpuEnabled || configuration.gpuMode == GpuMode.COMPUTE) return
+        val shouldRenderVisual = synchronized(lock) { visualSurfaceAttached && screenInteractive }
+        synchronized(lock) { gpuTransitioning = true }
+        try {
+            // v0.5 displays the real Vulkan swapchain workload. The Phase 4
+            // offscreen renderer remains available for compatibility, but it is
+            // never stacked on top of the onscreen scene.
+            if (nativeVisualGpuStatus() == GpuNativeStatus.RUNNING) {
+                NativeStress.stopVisualGpuStress()
+            }
+            if (shouldRenderVisual) {
+                if (configuration.gpuMode == GpuMode.VISUAL && computeFallbackActive) {
+                    NativeStress.stopGpuStress()
+                    synchronized(lock) {
+                        computeFallbackActive = false
+                        recordEventLocked(SessionEventType.COMPUTE_FALLBACK_STOPPED)
+                    }
+                }
+                synchronized(lock) { recordEventLocked(SessionEventType.VISUAL_RESUMED) }
+            } else {
+                synchronized(lock) { recordEventLocked(SessionEventType.VISUAL_PAUSED) }
+                if (configuration.gpuMode == GpuMode.VISUAL &&
+                    GpuNativeStatus.fromCode(NativeStress.getGpuStressStatus()) !=
+                    GpuNativeStatus.RUNNING
+                ) {
+                    check(NativeStress.startGpuStress(configuration.gpuTargetPercent)) {
+                        nativeGpuError("Visual compute fallback failed")
+                    }
+                    synchronized(lock) {
+                        computeFallbackActive = true
+                        currentSession?.screenFallbackUsed = true
+                        recordEventLocked(SessionEventType.COMPUTE_FALLBACK_STARTED)
+                    }
+                }
+            }
+        } catch (error: Throwable) {
+            triggerRuntimeError(error.message ?: "GPU visual transition failed")
+        } finally {
+            synchronized(lock) { gpuTransitioning = false }
+        }
+    }
+
+    private fun recordEventLocked(type: SessionEventType, detail: String? = null) {
+        val session = currentSession ?: return
+        if (session.eventTimeline.lastOrNull()?.type == type) return
+        val elapsed = (SystemClock.elapsedRealtime() - session.startElapsedTimeMs)
+            .coerceAtLeast(0L)
+        session.eventTimeline += SessionEvent(elapsed, type, detail)
+    }
+
+    private fun classifyResourceError(message: String): StopReason = when {
+        message.contains("GPU", ignoreCase = true) ||
+            message.contains("Vulkan", ignoreCase = true) -> StopReason.GPU_ERROR
+        message.contains("Memory", ignoreCase = true) -> StopReason.MEMORY_ERROR
+        message.contains("Storage", ignoreCase = true) ||
+            message.contains("I/O", ignoreCase = true) -> StopReason.STORAGE_ERROR
+        else -> StopReason.RESOURCE_ERROR
+    }
+
     private fun logInfo(message: String) {
         Log.i(LOG_TAG, message)
         diagnosticLog.record(message)
@@ -924,11 +1101,18 @@ class CombinedStressController(
         if (reasonPriority(second) > reasonPriority(first)) second else first
 
     private fun reasonPriority(reason: StopReason): Int = when (reason) {
-        StopReason.USER -> 0
+        StopReason.USER_STOP -> 0
         StopReason.DURATION_COMPLETED -> 1
-        StopReason.ACTIVITY_STOPPED -> 2
-        StopReason.THERMAL -> 3
-        StopReason.RESOURCE_ERROR -> 4
+        StopReason.THERMAL_CRITICAL,
+        StopReason.THERMAL_EMERGENCY,
+        StopReason.THERMAL_SHUTDOWN,
+        -> 3
+        StopReason.GPU_ERROR,
+        StopReason.MEMORY_ERROR,
+        StopReason.STORAGE_ERROR,
+        StopReason.SERVICE_ERROR,
+        StopReason.RESOURCE_ERROR,
+        -> 4
     }
 
     private fun Long.floorToMib(): Long = this / MIB * MIB

@@ -68,6 +68,26 @@ class ResultExporter(private val activity: Activity) {
                 put("enabledResources", enabledResources)
                 put("stopReason", session.stopReason?.name ?: "UNKNOWN")
                 put("lastError", session.lastError ?: JSONObject.NULL)
+                put("eventTimeline", JSONArray().apply {
+                    session.eventTimeline.forEach { event ->
+                        put(JSONObject().apply {
+                            put("elapsedTimeMs", event.elapsedTimeMs)
+                            put("type", event.type.name)
+                            put("detail", event.detail ?: JSONObject.NULL)
+                        })
+                    }
+                })
+            })
+            put("screen", JSONObject().apply {
+                put("mode", session.screenMode.name)
+                put("screenOffAtElapsedMs", session.screenOffAtElapsedMs ?: JSONObject.NULL)
+                put("screenOnAtElapsedMs", session.screenOnAtElapsedMs ?: JSONObject.NULL)
+                put("screenOffDurationMs", session.screenOffDurationMs)
+                put("transitionCount", session.screenTransitionCount)
+                put("computeFallbackUsed", session.screenFallbackUsed)
+                put("wakeAttempted", session.wakeAttempted)
+                put("wakeSucceeded", session.wakeSucceeded)
+                put("wakeReason", session.wakeReason ?: JSONObject.NULL)
             })
             put("cpu", JSONObject().apply {
                 put("enabled", session.configuration.cpuEnabled)

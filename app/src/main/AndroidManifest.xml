@@ -1,6 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <uses-feature
         android:name="android.hardware.vulkan.compute"
         android:required="false" />
@@ -16,6 +21,15 @@
         android:roundIcon="@drawable/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.AndroidResourceStress">
+        <service
+            android:name=".StressForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse"
+            android:stopWithTask="false">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="User-initiated CPU, GPU, memory, and app-private storage stress session" />
+        </service>
         <provider
             android:name=".ExportFileProvider"
             android:authorities="${applicationId}.exports"
@@ -25,6 +39,11 @@
         <activity android:name=".SessionDetailActivity" android:exported="false" />
         <activity android:name=".DeviceInfoActivity" android:exported="false" />
         <activity android:name=".SettingsActivity" android:exported="false" />
+        <activity android:name=".MonitorActivity" android:exported="false" />
+        <activity
+            android:name=".GpuVisualActivity"
+            android:exported="false"
+            android:screenOrientation="portrait" />
         <activity
             android:name=".MainActivity"
             android:exported="true">

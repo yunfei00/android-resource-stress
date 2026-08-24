@@ -29,6 +29,11 @@ enum class GpuMode {
     MIXED,
 }
 
+enum class ScreenMode {
+    ON,
+    OFF,
+}
+
 enum class StressDuration(val durationMs: Long, val displayLabel: String) {
     SECONDS_30(30_000L, "30 seconds"),
     MINUTE_1(60_000L, "1 minute"),
@@ -40,10 +45,15 @@ enum class StressDuration(val durationMs: Long, val displayLabel: String) {
 }
 
 enum class StopReason {
-    USER,
+    USER_STOP,
     DURATION_COMPLETED,
-    THERMAL,
-    ACTIVITY_STOPPED,
+    THERMAL_CRITICAL,
+    THERMAL_EMERGENCY,
+    THERMAL_SHUTDOWN,
+    GPU_ERROR,
+    MEMORY_ERROR,
+    STORAGE_ERROR,
+    SERVICE_ERROR,
     RESOURCE_ERROR,
 }
 
@@ -60,6 +70,27 @@ data class CombinedStressConfiguration(
     val storageLevel: StorageLevel = StorageLevel.LOW,
     val gpuMode: GpuMode = GpuMode.COMPUTE,
     val duration: StressDuration,
+    val screenMode: ScreenMode = ScreenMode.ON,
+)
+
+enum class SessionEventType {
+    SESSION_START,
+    SCREEN_OFF,
+    SCREEN_ON,
+    VISUAL_PAUSED,
+    VISUAL_RESUMED,
+    COMPUTE_FALLBACK_STARTED,
+    COMPUTE_FALLBACK_STOPPED,
+    THERMAL_CHANGE,
+    SCREEN_WAKE_REQUEST,
+    SCREEN_WAKE_RESULT,
+    SESSION_STOP,
+}
+
+data class SessionEvent(
+    val elapsedTimeMs: Long,
+    val type: SessionEventType,
+    val detail: String? = null,
 )
 
 data class ThermalEvent(
@@ -116,6 +147,16 @@ data class StressSessionSnapshot(
     val peakEstimatedBatteryPowerWatts: Double? = null,
     val peakVisualFps: Double = 0.0,
     val averageVisualFrameTimeNanos: Double = 0.0,
+    val screenMode: ScreenMode = configuration.screenMode,
+    val screenOffAtElapsedMs: Long? = null,
+    val screenOnAtElapsedMs: Long? = null,
+    val screenOffDurationMs: Long = 0L,
+    val screenTransitionCount: Int = 0,
+    val screenFallbackUsed: Boolean = false,
+    val wakeAttempted: Boolean = false,
+    val wakeSucceeded: Boolean = false,
+    val wakeReason: String? = null,
+    val eventTimeline: List<SessionEvent> = emptyList(),
 )
 
 data class CombinedRuntimeSnapshot(
@@ -181,6 +222,7 @@ object PresetConfigurations {
             gpuTargetPercent = 50,
             memoryTarget = MemoryTarget.MIB_512,
             duration = duration,
+            screenMode = ScreenMode.ON,
         )
         StressPreset.HIGH -> CombinedStressConfiguration(
             preset = preset,
@@ -192,6 +234,7 @@ object PresetConfigurations {
             gpuTargetPercent = 75,
             memoryTarget = MemoryTarget.AUTO,
             duration = duration,
+            screenMode = ScreenMode.ON,
         )
         StressPreset.EXTREME -> CombinedStressConfiguration(
             preset = preset,
@@ -203,6 +246,7 @@ object PresetConfigurations {
             gpuTargetPercent = 100,
             memoryTarget = MemoryTarget.AUTO,
             duration = duration,
+            screenMode = ScreenMode.ON,
         )
         StressPreset.CUSTOM -> create(StressPreset.EXTREME, duration).copy(
             preset = StressPreset.CUSTOM,

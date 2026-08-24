@@ -27,6 +27,12 @@ set(VISUAL_VERTEX_HEADER "${CMAKE_CURRENT_BINARY_DIR}/visual_vertex_shader_spv.h
 set(VISUAL_FRAGMENT_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/shaders/visual.frag")
 set(VISUAL_FRAGMENT_BINARY "${CMAKE_CURRENT_BINARY_DIR}/visual.frag.spv")
 set(VISUAL_FRAGMENT_HEADER "${CMAKE_CURRENT_BINARY_DIR}/visual_fragment_shader_spv.h")
+set(ONSCREEN_VERTEX_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/shaders/onscreen.vert")
+set(ONSCREEN_VERTEX_BINARY "${CMAKE_CURRENT_BINARY_DIR}/onscreen.vert.spv")
+set(ONSCREEN_VERTEX_HEADER "${CMAKE_CURRENT_BINARY_DIR}/onscreen_vertex_shader_spv.h")
+set(ONSCREEN_FRAGMENT_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/shaders/onscreen.frag")
+set(ONSCREEN_FRAGMENT_BINARY "${CMAKE_CURRENT_BINARY_DIR}/onscreen.frag.spv")
+set(ONSCREEN_FRAGMENT_HEADER "${CMAKE_CURRENT_BINARY_DIR}/onscreen_fragment_shader_spv.h")
 
 add_custom_command(
     OUTPUT "${STRESS_SHADER_HEADER}"
@@ -42,6 +48,38 @@ add_custom_command(
     DEPENDS
         "${STRESS_SHADER_SOURCE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/embed_spirv.cmake"
+    VERBATIM
+)
+
+add_custom_command(
+    OUTPUT "${ONSCREEN_VERTEX_HEADER}"
+    COMMAND "${GLSLC_EXECUTABLE}"
+        --target-env=vulkan1.0
+        -O
+        -o "${ONSCREEN_VERTEX_BINARY}"
+        "${ONSCREEN_VERTEX_SOURCE}"
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSPIRV_PATH=${ONSCREEN_VERTEX_BINARY}"
+        "-DHEADER_PATH=${ONSCREEN_VERTEX_HEADER}"
+        "-DSYMBOL_BASE=OnscreenVertexShader"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/embed_spirv_named.cmake"
+    DEPENDS "${ONSCREEN_VERTEX_SOURCE}" "${CMAKE_CURRENT_SOURCE_DIR}/embed_spirv_named.cmake"
+    VERBATIM
+)
+
+add_custom_command(
+    OUTPUT "${ONSCREEN_FRAGMENT_HEADER}"
+    COMMAND "${GLSLC_EXECUTABLE}"
+        --target-env=vulkan1.0
+        -O
+        -o "${ONSCREEN_FRAGMENT_BINARY}"
+        "${ONSCREEN_FRAGMENT_SOURCE}"
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSPIRV_PATH=${ONSCREEN_FRAGMENT_BINARY}"
+        "-DHEADER_PATH=${ONSCREEN_FRAGMENT_HEADER}"
+        "-DSYMBOL_BASE=OnscreenFragmentShader"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/embed_spirv_named.cmake"
+    DEPENDS "${ONSCREEN_FRAGMENT_SOURCE}" "${CMAKE_CURRENT_SOURCE_DIR}/embed_spirv_named.cmake"
     VERBATIM
 )
 
@@ -87,18 +125,23 @@ add_library(
     "${STRESS_SHADER_HEADER}"
     "${VISUAL_VERTEX_HEADER}"
     "${VISUAL_FRAGMENT_HEADER}"
+    "${ONSCREEN_VERTEX_HEADER}"
+    "${ONSCREEN_FRAGMENT_HEADER}"
     native_stress.cpp
     cpu_stress.cpp
     memory_stress.cpp
     gpu_stress.cpp
     vulkan_context.cpp
     visual_gpu_stress.cpp
+    onscreen_vulkan_renderer.cpp
 )
 
 target_compile_features(resource_stress PRIVATE cxx_std_17)
 target_compile_options(resource_stress PRIVATE -Wall -Wextra -Wpedantic)
+target_compile_definitions(resource_stress PRIVATE VK_USE_PLATFORM_ANDROID_KHR)
 target_include_directories(resource_stress PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
 
 find_library(log_library log REQUIRED)
 find_library(vulkan_library vulkan REQUIRED)
-target_link_libraries(resource_stress PRIVATE ${log_library} ${vulkan_library})
+find_library(android_library android REQUIRED)
+target_link_libraries(resource_stress PRIVATE ${log_library} ${vulkan_library} ${android_library})

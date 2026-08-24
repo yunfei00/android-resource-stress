@@ -61,10 +61,15 @@ fun Context.stopReasonLabel(reason: StopReason?): String = if (reason == null) {
 } else {
     getString(
         when (reason) {
-            StopReason.USER -> R.string.stop_user
+            StopReason.USER_STOP -> R.string.stop_user
             StopReason.DURATION_COMPLETED -> R.string.stop_duration
-            StopReason.THERMAL -> R.string.stop_thermal
-            StopReason.ACTIVITY_STOPPED -> R.string.stop_activity
+            StopReason.THERMAL_CRITICAL -> R.string.stop_thermal_critical
+            StopReason.THERMAL_EMERGENCY -> R.string.stop_thermal_emergency
+            StopReason.THERMAL_SHUTDOWN -> R.string.stop_thermal_shutdown
+            StopReason.GPU_ERROR -> R.string.stop_gpu_error
+            StopReason.MEMORY_ERROR -> R.string.stop_memory_error
+            StopReason.STORAGE_ERROR -> R.string.stop_storage_error
+            StopReason.SERVICE_ERROR -> R.string.stop_service_error
             StopReason.RESOURCE_ERROR -> R.string.stop_resource_error
         },
     )

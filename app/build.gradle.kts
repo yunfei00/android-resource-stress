@@ -33,8 +33,8 @@ android {
         applicationId = "com.androidresourcestress"
         minSdk = 29
         targetSdk = 36
-        versionCode = 4
-        versionName = "0.4.0"
+        versionCode = 5
+        versionName = "0.5.0"
         testInstrumentationRunner = "com.androidresourcestress.Phase4DeviceHarness"
         buildConfigField("String", "GIT_COMMIT", "\"$gitCommit\"")
         buildConfigField("String", "GIT_TAG", "\"$gitTag\"")

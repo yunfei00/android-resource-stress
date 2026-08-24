@@ -46,6 +46,7 @@ class AppPreferences(context: Context) {
             storageLevel = enumPreference(KEY_STORAGE_LEVEL, StorageLevel.LOW),
             gpuMode = enumPreference(KEY_GPU_MODE, GpuMode.COMPUTE),
             duration = enumPreference(KEY_DURATION, StressDuration.MINUTES_5),
+            screenMode = enumPreference(KEY_SCREEN_MODE, ScreenMode.ON),
         )
     }
 
@@ -63,6 +64,7 @@ class AppPreferences(context: Context) {
             .putString(KEY_STORAGE_LEVEL, configuration.storageLevel.name)
             .putString(KEY_GPU_MODE, configuration.gpuMode.name)
             .putString(KEY_DURATION, configuration.duration.name)
+            .putString(KEY_SCREEN_MODE, configuration.screenMode.name)
             .apply()
     }
 
@@ -74,6 +76,7 @@ class AppPreferences(context: Context) {
                 storageMode = current.storageMode,
                 storageLevel = current.storageLevel,
                 gpuMode = current.gpuMode,
+                screenMode = current.screenMode,
             ),
         )
     }
@@ -105,6 +108,7 @@ class AppPreferences(context: Context) {
         private const val KEY_STORAGE_LEVEL = "storage_level"
         private const val KEY_GPU_MODE = "gpu_mode"
         private const val KEY_DURATION = "duration"
+        private const val KEY_SCREEN_MODE = "screen_mode"
         const val DEFAULT_HISTORY_LIMIT = 30
         const val MIN_HISTORY_LIMIT = 20
         const val MAX_HISTORY_LIMIT = 50

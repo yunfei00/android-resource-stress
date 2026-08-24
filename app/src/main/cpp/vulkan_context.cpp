@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstring>
 #include <limits>
 #include <sstream>
@@ -206,7 +207,9 @@ bool VulkanContext::prepareStressResources() {
         !createPipelineResources() ||
         !createCommandResources() ||
         !initializeStorageBuffer() ||
-        !recordStressCommandBuffer()) {
+        !recordStressCommandBuffers() ||
+        !calibrateWorkload() ||
+        !recordStressCommandBuffers()) {
         releaseStressResources();
         return false;
     }
@@ -218,56 +221,19 @@ bool VulkanContext::submitAndWait(
     std::uint64_t* outputChecksum,
     std::uint32_t* workGroupCount) {
     if (device_ == VK_NULL_HANDLE || pipeline_ == VK_NULL_HANDLE ||
-        commandBuffer_ == VK_NULL_HANDLE || fence_ == VK_NULL_HANDLE) {
+        commandBuffers_[0] == VK_NULL_HANDLE || fences_[0] == VK_NULL_HANDLE) {
         return fail("Vulkan stress resources are not initialized");
     }
-
-    VkResult result = vkResetFences(device_, 1, &fence_);
-    if (result != VK_SUCCESS) {
-        return fail("vkResetFences", result);
-    }
-    const VkSubmitInfo submitInfo{
-        VK_STRUCTURE_TYPE_SUBMIT_INFO,
-        nullptr,
-        0,
-        nullptr,
-        nullptr,
-        1,
-        &commandBuffer_,
-        0,
-        nullptr,
-    };
-    result = vkQueueSubmit(computeQueue_, 1, &submitInfo, fence_);
-    if (result != VK_SUCCESS) {
-        return fail("vkQueueSubmit", result);
-    }
-    result = vkWaitForFences(device_, 1, &fence_, VK_TRUE, kFenceTimeoutNanos);
-    if (result != VK_SUCCESS) {
-        return fail("vkWaitForFences", result);
-    }
-
-    std::uint64_t measuredNanos = 0;
-    if (capabilities_.timestampSupported && queryPool_ != VK_NULL_HANDLE) {
-        std::array<std::uint64_t, 2> timestamps{};
-        result = vkGetQueryPoolResults(
-            device_,
-            queryPool_,
-            0,
-            static_cast<std::uint32_t>(timestamps.size()),
-            sizeof(timestamps),
-            timestamps.data(),
-            sizeof(std::uint64_t),
-            VK_QUERY_RESULT_64_BIT);
-        if (result != VK_SUCCESS) {
-            return fail("vkGetQueryPoolResults", result);
+    if (!inFlightPrimed_) {
+        for (std::size_t slot = 0; slot < kInFlightBatchCount; ++slot) {
+            if (!submitSlot(slot)) return false;
         }
-        const std::uint64_t mask = timestampValidBits_ >= 64
-            ? std::numeric_limits<std::uint64_t>::max()
-            : (1ULL << timestampValidBits_) - 1ULL;
-        const std::uint64_t ticks = (timestamps[1] - timestamps[0]) & mask;
-        measuredNanos = static_cast<std::uint64_t>(
-            static_cast<double>(ticks) * static_cast<double>(timestampPeriodNanos_));
+        nextCompletedSlot_ = 0;
+        inFlightPrimed_ = true;
     }
+    const std::size_t completedSlot = nextCompletedSlot_;
+    std::uint64_t measuredNanos = 0;
+    if (!waitSlot(completedSlot, &measuredNanos)) return false;
 
     if (gpuWorkNanos != nullptr) {
         *gpuWorkNanos = measuredNanos;
@@ -276,8 +242,10 @@ bool VulkanContext::submitAndWait(
         *outputChecksum = readOutputChecksum();
     }
     if (workGroupCount != nullptr) {
-        *workGroupCount = dispatchWorkGroupCount_;
+        *workGroupCount = dispatchWorkGroupCount_ * dispatchRepetitions_;
     }
+    if (!submitSlot(completedSlot)) return false;
+    nextCompletedSlot_ = (completedSlot + 1) % kInFlightBatchCount;
     return true;
 }
 
@@ -291,18 +259,20 @@ void VulkanContext::releaseStressResources() {
         vkUnmapMemory(device_, readbackMemory_);
         readbackMapping_ = nullptr;
     }
-    if (queryPool_ != VK_NULL_HANDLE) {
-        vkDestroyQueryPool(device_, queryPool_, nullptr);
-        queryPool_ = VK_NULL_HANDLE;
-    }
-    if (fence_ != VK_NULL_HANDLE) {
-        vkDestroyFence(device_, fence_, nullptr);
-        fence_ = VK_NULL_HANDLE;
+    for (std::size_t slot = 0; slot < kInFlightBatchCount; ++slot) {
+        if (queryPools_[slot] != VK_NULL_HANDLE) {
+            vkDestroyQueryPool(device_, queryPools_[slot], nullptr);
+            queryPools_[slot] = VK_NULL_HANDLE;
+        }
+        if (fences_[slot] != VK_NULL_HANDLE) {
+            vkDestroyFence(device_, fences_[slot], nullptr);
+            fences_[slot] = VK_NULL_HANDLE;
+        }
     }
     if (commandPool_ != VK_NULL_HANDLE) {
         vkDestroyCommandPool(device_, commandPool_, nullptr);
         commandPool_ = VK_NULL_HANDLE;
-        commandBuffer_ = VK_NULL_HANDLE;
+        commandBuffers_.fill(VK_NULL_HANDLE);
     }
     if (pipeline_ != VK_NULL_HANDLE) {
         vkDestroyPipeline(device_, pipeline_, nullptr);
@@ -342,6 +312,9 @@ void VulkanContext::releaseStressResources() {
         storageMemory_ = VK_NULL_HANDLE;
     }
     dispatchWorkGroupCount_ = 0;
+    dispatchRepetitions_ = 1;
+    nextCompletedSlot_ = 0;
+    inFlightPrimed_ = false;
 }
 
 void VulkanContext::shutdown() {
@@ -671,9 +644,10 @@ bool VulkanContext::createCommandResources() {
         nullptr,
         commandPool_,
         VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-        1,
+        static_cast<std::uint32_t>(kInFlightBatchCount),
     };
-    result = vkAllocateCommandBuffers(device_, &commandBufferAllocateInfo, &commandBuffer_);
+    result = vkAllocateCommandBuffers(
+        device_, &commandBufferAllocateInfo, commandBuffers_.data());
     if (result != VK_SUCCESS) {
         return fail("vkAllocateCommandBuffers", result);
     }
@@ -683,36 +657,44 @@ bool VulkanContext::createCommandResources() {
         nullptr,
         0,
     };
-    result = vkCreateFence(device_, &fenceCreateInfo, nullptr, &fence_);
-    if (result != VK_SUCCESS) {
-        return fail("vkCreateFence", result);
-    }
-
-    if (capabilities_.timestampSupported) {
-        const VkQueryPoolCreateInfo queryPoolCreateInfo{
-            VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO,
-            nullptr,
-            0,
-            VK_QUERY_TYPE_TIMESTAMP,
-            2,
-            0,
-        };
-        result = vkCreateQueryPool(device_, &queryPoolCreateInfo, nullptr, &queryPool_);
-        if (result != VK_SUCCESS) {
-            capabilities_.timestampSupported = false;
-            queryPool_ = VK_NULL_HANDLE;
-            __android_log_print(
-                ANDROID_LOG_WARN,
-                kLogTag,
-                "Timestamp query disabled: %s",
-                resultName(result));
+    for (std::size_t slot = 0; slot < kInFlightBatchCount; ++slot) {
+        result = vkCreateFence(device_, &fenceCreateInfo, nullptr, &fences_[slot]);
+        if (result != VK_SUCCESS) return fail("vkCreateFence", result);
+        if (capabilities_.timestampSupported) {
+            const VkQueryPoolCreateInfo queryPoolCreateInfo{
+                VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO,
+                nullptr,
+                0,
+                VK_QUERY_TYPE_TIMESTAMP,
+                2,
+                0,
+            };
+            result = vkCreateQueryPool(
+                device_, &queryPoolCreateInfo, nullptr, &queryPools_[slot]);
+            if (result != VK_SUCCESS) {
+                capabilities_.timestampSupported = false;
+                __android_log_print(
+                    ANDROID_LOG_WARN,
+                    kLogTag,
+                    "Timestamp query disabled: %s",
+                    resultName(result));
+                for (VkQueryPool& queryPool : queryPools_) {
+                    if (queryPool != VK_NULL_HANDLE) {
+                        vkDestroyQueryPool(device_, queryPool, nullptr);
+                        queryPool = VK_NULL_HANDLE;
+                    }
+                }
+                break;
+            }
         }
     }
     return true;
 }
 
 bool VulkanContext::initializeStorageBuffer() {
-    VkResult result = vkResetCommandBuffer(commandBuffer_, 0);
+    VkCommandBuffer commandBuffer = commandBuffers_[0];
+    VkFence fence = fences_[0];
+    VkResult result = vkResetCommandBuffer(commandBuffer, 0);
     if (result != VK_SUCCESS) {
         return fail("vkResetCommandBuffer(init)", result);
     }
@@ -722,11 +704,11 @@ bool VulkanContext::initializeStorageBuffer() {
         VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
         nullptr,
     };
-    result = vkBeginCommandBuffer(commandBuffer_, &beginInfo);
+    result = vkBeginCommandBuffer(commandBuffer, &beginInfo);
     if (result != VK_SUCCESS) {
         return fail("vkBeginCommandBuffer(init)", result);
     }
-    vkCmdFillBuffer(commandBuffer_, storageBuffer_, 0, kStorageBufferBytes, 0x3F000000U);
+    vkCmdFillBuffer(commandBuffer, storageBuffer_, 0, kStorageBufferBytes, 0x3F000000U);
     const VkBufferMemoryBarrier barrier{
         VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
         nullptr,
@@ -739,7 +721,7 @@ bool VulkanContext::initializeStorageBuffer() {
         kStorageBufferBytes,
     };
     vkCmdPipelineBarrier(
-        commandBuffer_,
+        commandBuffer,
         VK_PIPELINE_STAGE_TRANSFER_BIT,
         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
         0,
@@ -749,7 +731,7 @@ bool VulkanContext::initializeStorageBuffer() {
         &barrier,
         0,
         nullptr);
-    result = vkEndCommandBuffer(commandBuffer_);
+    result = vkEndCommandBuffer(commandBuffer);
     if (result != VK_SUCCESS) {
         return fail("vkEndCommandBuffer(init)", result);
     }
@@ -761,26 +743,26 @@ bool VulkanContext::initializeStorageBuffer() {
         nullptr,
         nullptr,
         1,
-        &commandBuffer_,
+        &commandBuffer,
         0,
         nullptr,
     };
-    result = vkResetFences(device_, 1, &fence_);
+    result = vkResetFences(device_, 1, &fence);
     if (result != VK_SUCCESS) {
         return fail("vkResetFences(init)", result);
     }
-    result = vkQueueSubmit(computeQueue_, 1, &submitInfo, fence_);
+    result = vkQueueSubmit(computeQueue_, 1, &submitInfo, fence);
     if (result != VK_SUCCESS) {
         return fail("vkQueueSubmit(init)", result);
     }
-    result = vkWaitForFences(device_, 1, &fence_, VK_TRUE, kFenceTimeoutNanos);
+    result = vkWaitForFences(device_, 1, &fence, VK_TRUE, kFenceTimeoutNanos);
     if (result != VK_SUCCESS) {
         return fail("vkWaitForFences(init)", result);
     }
     return true;
 }
 
-bool VulkanContext::recordStressCommandBuffer() {
+bool VulkanContext::recordStressCommandBuffers() {
     const std::uint64_t elementCount = kStorageBufferBytes / (sizeof(float) * 4ULL);
     const std::uint64_t workGroupCount =
         (elementCount + kShaderLocalSizeX - 1ULL) / kShaderLocalSizeX;
@@ -789,9 +771,20 @@ bool VulkanContext::recordStressCommandBuffer() {
         workGroupCount > std::numeric_limits<std::uint32_t>::max()) {
         return fail("Storage buffer requires an unsupported compute workgroup count");
     }
-    dispatchWorkGroupCount_ = static_cast<std::uint32_t>(workGroupCount);
+    if (dispatchWorkGroupCount_ == 0) {
+        dispatchWorkGroupCount_ = static_cast<std::uint32_t>(workGroupCount);
+    }
+    for (std::size_t slot = 0; slot < kInFlightBatchCount; ++slot) {
+        if (!recordStressCommandBuffer(slot)) return false;
+    }
+    return true;
+}
 
-    VkResult result = vkResetCommandBuffer(commandBuffer_, 0);
+bool VulkanContext::recordStressCommandBuffer(std::size_t slot) {
+    VkCommandBuffer commandBuffer = commandBuffers_[slot];
+    VkQueryPool queryPool = queryPools_[slot];
+
+    VkResult result = vkResetCommandBuffer(commandBuffer, 0);
     if (result != VK_SUCCESS) {
         return fail("vkResetCommandBuffer(stress)", result);
     }
@@ -801,17 +794,17 @@ bool VulkanContext::recordStressCommandBuffer() {
         VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT,
         nullptr,
     };
-    result = vkBeginCommandBuffer(commandBuffer_, &beginInfo);
+    result = vkBeginCommandBuffer(commandBuffer, &beginInfo);
     if (result != VK_SUCCESS) {
         return fail("vkBeginCommandBuffer(stress)", result);
     }
 
-    if (queryPool_ != VK_NULL_HANDLE) {
-        vkCmdResetQueryPool(commandBuffer_, queryPool_, 0, 2);
+    if (queryPool != VK_NULL_HANDLE) {
+        vkCmdResetQueryPool(commandBuffer, queryPool, 0, 2);
         vkCmdWriteTimestamp(
-            commandBuffer_,
+            commandBuffer,
             VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-            queryPool_,
+            queryPool,
             0);
     }
 
@@ -827,7 +820,7 @@ bool VulkanContext::recordStressCommandBuffer() {
         kStorageBufferBytes,
     };
     vkCmdPipelineBarrier(
-        commandBuffer_,
+        commandBuffer,
         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
         0,
@@ -838,9 +831,9 @@ bool VulkanContext::recordStressCommandBuffer() {
         0,
         nullptr);
 
-    vkCmdBindPipeline(commandBuffer_, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_);
+    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_);
     vkCmdBindDescriptorSets(
-        commandBuffer_,
+        commandBuffer,
         VK_PIPELINE_BIND_POINT_COMPUTE,
         pipelineLayout_,
         0,
@@ -848,16 +841,32 @@ bool VulkanContext::recordStressCommandBuffer() {
         &descriptorSet_,
         0,
         nullptr);
-    vkCmdDispatch(commandBuffer_, dispatchWorkGroupCount_, 1, 1);
-
-    if (queryPool_ != VK_NULL_HANDLE) {
-        vkCmdWriteTimestamp(
-            commandBuffer_,
-            VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
-            queryPool_,
-            1);
+    for (std::uint32_t repetition = 0; repetition < dispatchRepetitions_; ++repetition) {
+        vkCmdDispatch(commandBuffer, dispatchWorkGroupCount_, 1, 1);
+        if (repetition + 1 < dispatchRepetitions_) {
+            const VkMemoryBarrier repeatBarrier{
+                VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+                nullptr,
+                VK_ACCESS_SHADER_WRITE_BIT,
+                VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
+            };
+            vkCmdPipelineBarrier(
+                commandBuffer,
+                VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                0,
+                1,
+                &repeatBarrier,
+                0,
+                nullptr,
+                0,
+                nullptr);
+        }
     }
 
+    // Keep the existing lightweight checksum diagnostic valid without a CPU-side
+    // queue idle. The copy is only 16 bytes and is consumed after this slot's
+    // bounded in-flight fence signals.
     const VkBufferMemoryBarrier readbackBarrier{
         VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
         nullptr,
@@ -870,7 +879,7 @@ bool VulkanContext::recordStressCommandBuffer() {
         kReadbackBytes,
     };
     vkCmdPipelineBarrier(
-        commandBuffer_,
+        commandBuffer,
         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
         VK_PIPELINE_STAGE_TRANSFER_BIT,
         0,
@@ -880,13 +889,126 @@ bool VulkanContext::recordStressCommandBuffer() {
         &readbackBarrier,
         0,
         nullptr);
-    const VkBufferCopy copyRegion{0, 0, kReadbackBytes};
-    vkCmdCopyBuffer(commandBuffer_, storageBuffer_, readbackBuffer_, 1, &copyRegion);
+    const VkBufferCopy readbackCopy{0, 0, kReadbackBytes};
+    vkCmdCopyBuffer(commandBuffer, storageBuffer_, readbackBuffer_, 1, &readbackCopy);
 
-    result = vkEndCommandBuffer(commandBuffer_);
+    if (queryPool != VK_NULL_HANDLE) {
+        vkCmdWriteTimestamp(
+            commandBuffer,
+            VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+            queryPool,
+            1);
+    }
+
+    result = vkEndCommandBuffer(commandBuffer);
     if (result != VK_SUCCESS) {
         return fail("vkEndCommandBuffer(stress)", result);
     }
+    return true;
+}
+
+bool VulkanContext::submitSlot(std::size_t slot) {
+    VkResult result = vkResetFences(device_, 1, &fences_[slot]);
+    if (result != VK_SUCCESS) return fail("vkResetFences(batch)", result);
+    const VkSubmitInfo submitInfo{
+        VK_STRUCTURE_TYPE_SUBMIT_INFO,
+        nullptr,
+        0,
+        nullptr,
+        nullptr,
+        1,
+        &commandBuffers_[slot],
+        0,
+        nullptr,
+    };
+    result = vkQueueSubmit(computeQueue_, 1, &submitInfo, fences_[slot]);
+    return result == VK_SUCCESS || fail("vkQueueSubmit(batch)", result);
+}
+
+bool VulkanContext::waitSlot(std::size_t slot, std::uint64_t* measuredNanos) {
+    const auto cpuStarted = std::chrono::steady_clock::now();
+    VkResult result = vkWaitForFences(
+        device_, 1, &fences_[slot], VK_TRUE, kFenceTimeoutNanos);
+    if (result != VK_SUCCESS) return fail("vkWaitForFences(batch)", result);
+    std::uint64_t measured = static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now() - cpuStarted).count());
+    if (capabilities_.timestampSupported && queryPools_[slot] != VK_NULL_HANDLE) {
+        std::array<std::uint64_t, 2> timestamps{};
+        result = vkGetQueryPoolResults(
+            device_, queryPools_[slot], 0, 2, sizeof(timestamps), timestamps.data(),
+            sizeof(std::uint64_t), VK_QUERY_RESULT_64_BIT);
+        if (result != VK_SUCCESS) return fail("vkGetQueryPoolResults(batch)", result);
+        const std::uint64_t mask = timestampValidBits_ >= 64
+            ? std::numeric_limits<std::uint64_t>::max()
+            : (1ULL << timestampValidBits_) - 1ULL;
+        const std::uint64_t ticks = (timestamps[1] - timestamps[0]) & mask;
+        measured = static_cast<std::uint64_t>(
+            static_cast<double>(ticks) * static_cast<double>(timestampPeriodNanos_));
+    }
+    if (measuredNanos != nullptr) *measuredNanos = measured;
+    return true;
+}
+
+bool VulkanContext::calibrateWorkload() {
+    std::uint64_t measuredNanos = 0;
+    constexpr std::uint64_t targetNanos = 12ULL * 1000ULL * 1000ULL;
+    constexpr std::uint64_t lowNanos = 8ULL * 1000ULL * 1000ULL;
+    constexpr std::uint64_t highNanos = 20ULL * 1000ULL * 1000ULL;
+    const std::uint64_t maximumSingleDispatch =
+        kStorageBufferBytes / (sizeof(float) * 4ULL) / kShaderLocalSizeX;
+    for (std::uint32_t attempt = 0; attempt < 3; ++attempt) {
+        const auto cpuStarted = std::chrono::steady_clock::now();
+        if (!submitSlot(0) || !waitSlot(0, &measuredNanos)) return false;
+        if (!capabilities_.timestampSupported) {
+            measuredNanos = static_cast<std::uint64_t>(
+                std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    std::chrono::steady_clock::now() - cpuStarted).count());
+        }
+        __android_log_print(
+            ANDROID_LOG_INFO,
+            kLogTag,
+            "GPU calibration attempt=%u measured=%.3fms workgroups=%u repetitions=%u",
+            attempt + 1,
+            static_cast<double>(measuredNanos) / 1'000'000.0,
+            dispatchWorkGroupCount_,
+            dispatchRepetitions_);
+        if (measuredNanos == 0 || (measuredNanos >= lowNanos && measuredNanos <= highNanos)) {
+            break;
+        }
+        const std::uint64_t currentEffective =
+            static_cast<std::uint64_t>(dispatchWorkGroupCount_) * dispatchRepetitions_;
+        const std::uint64_t desiredEffective = std::clamp<std::uint64_t>(
+            currentEffective * targetNanos / measuredNanos,
+            256,
+            maximumSingleDispatch * 4ULL);
+        const std::uint32_t repetitions = static_cast<std::uint32_t>(
+            std::clamp<std::uint64_t>(
+                (desiredEffective + maximumSingleDispatch - 1) / maximumSingleDispatch,
+                1,
+                4));
+        const std::uint32_t workgroups = static_cast<std::uint32_t>(
+            std::clamp<std::uint64_t>(
+                (desiredEffective + repetitions - 1) / repetitions,
+                256,
+                maximumSingleDispatch));
+        if (workgroups == dispatchWorkGroupCount_ && repetitions == dispatchRepetitions_) {
+            break;
+        }
+        dispatchWorkGroupCount_ = workgroups;
+        dispatchRepetitions_ = repetitions;
+        if (!recordStressCommandBuffers()) return false;
+    }
+    __android_log_print(
+        ANDROID_LOG_INFO,
+        kLogTag,
+        "GPU calibration final=%.3fms workgroups=%u repetitions=%u inFlight=%zu",
+        static_cast<double>(measuredNanos) / 1'000'000.0,
+        dispatchWorkGroupCount_,
+        dispatchRepetitions_,
+        kInFlightBatchCount);
+    inFlightPrimed_ = false;
+    nextCompletedSlot_ = 0;
     return true;
 }
 

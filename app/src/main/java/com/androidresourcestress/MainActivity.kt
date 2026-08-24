@@ -1,979 +1,582 @@
 package com.androidresourcestress
 
+import android.Manifest
 import android.app.AlertDialog
+import android.content.ComponentName
+import android.content.Context
 import android.content.Intent
+import android.content.ServiceConnection
+import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
+import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
 import android.view.View
-import android.view.ViewGroup
 import android.view.WindowInsets
 import android.view.WindowManager
-import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.CheckBox
+import android.widget.LinearLayout
+import android.widget.RadioButton
 import android.widget.RadioGroup
 import android.widget.Spinner
 import android.widget.TextView
 import android.widget.Toast
-import java.util.Locale
-import kotlin.math.min
 
-class MainActivity : LocalizedActivity(), CombinedStressController.Listener {
-    private lateinit var statusValue: TextView
+class MainActivity : LocalizedActivity(), StressForegroundService.Observer {
+    private lateinit var preferences: AppPreferences
+    private lateinit var stateValue: TextView
+    private lateinit var thermalValue: TextView
     private lateinit var elapsedValue: TextView
-    private lateinit var sessionPresetValue: TextView
-    private lateinit var sessionDurationValue: TextView
-    private lateinit var sessionStopReasonValue: TextView
-    private lateinit var sessionPeaksValue: TextView
-    private lateinit var lastErrorValue: TextView
-    private lateinit var cpuStateValue: TextView
-    private lateinit var cpuTargetValue: TextView
-    private lateinit var appCpuLoadValue: TextView
-    private lateinit var coreEquivalentValue: TextView
-    private lateinit var threadsValue: TextView
-    private lateinit var cpuFrequencyValue: TextView
-    private lateinit var memoryStateValue: TextView
-    private lateinit var totalRamValue: TextView
-    private lateinit var availableRamValue: TextView
-    private lateinit var systemUsedValue: TextView
-    private lateinit var appPssValue: TextView
-    private lateinit var nativePssValue: TextView
-    private lateinit var stressTargetValue: TextView
-    private lateinit var allocatedValue: TextView
-    private lateinit var memoryActivityValue: TextView
-    private lateinit var storageStatusValue: TextView
-    private lateinit var storageModeValue: TextView
-    private lateinit var storageWorkingSetValue: TextView
-    private lateinit var storageBytesWrittenValue: TextView
-    private lateinit var storageBytesReadValue: TextView
-    private lateinit var storageWriteActivityValue: TextView
-    private lateinit var storageReadActivityValue: TextView
-    private lateinit var storageTempFileValue: TextView
-    private lateinit var gpuDeviceValue: TextView
-    private lateinit var gpuVulkanValue: TextView
-    private lateinit var gpuComputeValue: TextView
-    private lateinit var gpuTargetValue: TextView
-    private lateinit var gpuStatusValue: TextView
-    private lateinit var gpuDispatchCountValue: TextView
-    private lateinit var gpuDispatchRateValue: TextView
-    private lateinit var gpuWorkTimeValue: TextView
-    private lateinit var gpuComputeActivityValue: TextView
-    private lateinit var gpuOutputValue: TextView
-    private lateinit var gpuModeValue: TextView
-    private lateinit var gpuVisualFpsValue: TextView
-    private lateinit var gpuVisualFrameTimeValue: TextView
-    private lateinit var gpuHardwareFrequencyValue: TextView
-    private lateinit var gpuHardwareUtilizationValue: TextView
-    private lateinit var gpuVisualStressView: GpuVisualStressView
-    private lateinit var thermalProtectionValue: TextView
-    private lateinit var thermalStatusValue: TextView
-    private lateinit var batteryTemperatureValue: TextView
-    private lateinit var startTemperatureValue: TextView
-    private lateinit var peakTemperatureValue: TextView
-    private lateinit var deltaTemperatureValue: TextView
-    private lateinit var thermalMessageValue: TextView
-    private lateinit var highestThermalSensorValue: TextView
-    private lateinit var batteryLevelValue: TextView
-    private lateinit var chargingStateValue: TextView
-    private lateinit var batteryVoltageValue: TextView
-    private lateinit var batteryCurrentValue: TextView
-    private lateinit var batteryPowerValue: TextView
-    private lateinit var configurationPanel: ViewGroup
+    private lateinit var topTitle: TextView
+    private lateinit var cpuCard: Button
+    private lateinit var gpuCard: Button
+    private lateinit var memoryCard: Button
+    private lateinit var storageCard: Button
     private lateinit var presetGroup: RadioGroup
-    private lateinit var cpuLoadGroup: RadioGroup
-    private lateinit var gpuLoadGroup: RadioGroup
-    private lateinit var gpuModeGroup: RadioGroup
-    private lateinit var ramTargetGroup: RadioGroup
-    private lateinit var resourceCpu: CheckBox
-    private lateinit var resourceGpu: CheckBox
-    private lateinit var resourceMemory: CheckBox
-    private lateinit var resourceStorage: CheckBox
-    private lateinit var storageModeGroup: RadioGroup
-    private lateinit var storageLevelGroup: RadioGroup
     private lateinit var durationSpinner: Spinner
+    private lateinit var screenModeGroup: RadioGroup
     private lateinit var startButton: Button
     private lateinit var stopButton: Button
-    private lateinit var resultSummaryValue: TextView
-    private lateinit var exportResultButton: Button
+    private val handler = Handler(Looper.getMainLooper())
+    private val durations = arrayOf(
+        StressDuration.MINUTE_1,
+        StressDuration.MINUTES_5,
+        StressDuration.MINUTES_10,
+        StressDuration.MINUTES_30,
+        StressDuration.CONTINUOUS,
+    )
+    private var configuration = PresetConfigurations.create(StressPreset.EXTREME)
+    private var applyingControls = false
+    private var service: StressForegroundService? = null
+    private var serviceBound = false
+    private var latestSnapshot: CombinedRuntimeSnapshot? = null
+    private var screenOffPromptPending = false
+    private var visualAutoLaunchedSessionId: Long? = null
 
-    private lateinit var controller: CombinedStressController
-    private lateinit var preferences: AppPreferences
-    private lateinit var historyStore: SessionHistoryStore
-    private lateinit var diagnosticLog: DiagnosticLog
-    private lateinit var resultExporter: ResultExporter
-    private lateinit var deviceMonitor: DeviceMonitor
-    private lateinit var deviceInfo: DeviceInfo
-    private val monitorHandler = Handler(Looper.getMainLooper())
-    private val durations = StressDuration.entries.toTypedArray()
-    private var monitoring = false
-    private var nativeAvailable = false
-    private var applyingPreset = false
-    private var lastSnapshot: CombinedRuntimeSnapshot? = null
+    private val serviceConnection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
+            service = (binder as? StressForegroundService.LocalBinder)?.service
+            serviceBound = service != null
+            service?.addObserver(this@MainActivity)
+        }
 
-    private val monitorRunnable = object : Runnable {
-        override fun run() {
-            if (!monitoring) return
-            updateLiveMetrics()
-            monitorHandler.postDelayed(this, MONITOR_INTERVAL_MS)
+        override fun onServiceDisconnected(name: ComponentName?) {
+            service?.removeObserver(this@MainActivity)
+            service = null
+            serviceBound = false
         }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val nativeLoadError = runCatching { NativeStress.ensureLoaded() }.exceptionOrNull()
-        nativeAvailable = nativeLoadError == null
+        NativeStress.ensureLoaded()
         setContentView(R.layout.activity_main)
-        installSystemBarInsets()
-        bindViews()
-
+        installInsets()
         preferences = AppPreferences(this)
-        historyStore = SessionHistoryStore(this)
-        diagnosticLog = DiagnosticLog(this)
-        diagnosticLog.record("App started version=${BuildConfig.VERSION_NAME}")
-        resultExporter = ResultExporter(this)
-        deviceMonitor = DeviceMonitor(this)
-        deviceInfo = deviceMonitor.deviceInfo()
-        renderDeviceInfo(deviceInfo)
-        controller = CombinedStressController(this, deviceInfo.logicalCoreCount, this)
-
-        installConfigurationListeners()
-        configureDurationSpinner()
-        applyConfiguration(preferences.loadConfiguration())
-        startButton.setOnClickListener { startSession() }
-        stopButton.setOnClickListener {
-            stopVisualStress()
-            controller.stopAll(StopReason.USER)
-        }
-        findViewById<Button>(R.id.historyButton).setOnClickListener {
-            startActivity(Intent(this, HistoryActivity::class.java))
-        }
-        findViewById<Button>(R.id.deviceInfoButton).setOnClickListener {
-            startActivity(Intent(this, DeviceInfoActivity::class.java))
-        }
-        findViewById<Button>(R.id.settingsButton).setOnClickListener {
-            startActivity(Intent(this, SettingsActivity::class.java))
-        }
-        exportResultButton.setOnClickListener { exportMostRecentResult() }
-        findViewById<Button>(R.id.exportDiagnosticButton).setOnClickListener {
-            runCatching {
-                resultExporter.share(
-                    diagnosticLog.export(),
-                    "text/plain",
-                    getString(R.string.share_diagnostics),
-                )
-            }.onFailure { onCombinedError(it.message ?: getString(R.string.export_diagnostics_failed)) }
-        }
-        renderRecentResult(historyStore.list().firstOrNull())
-        renderState(CombinedStressState.IDLE)
-
-        if (nativeLoadError == null) {
-            controller.initialize()
-        } else {
-            val message = getString(
-                R.string.native_load_failed,
-                nativeLoadError.message ?: nativeLoadError.javaClass.simpleName,
-            )
-            lastErrorValue.text = message
-            Toast.makeText(this, message, Toast.LENGTH_LONG).show()
-        }
+        configuration = preferences.loadConfiguration()
+        bindViews()
+        configureDuration()
+        installListeners()
+        applyConfiguration(configuration)
+        render(null, CombinedStressState.IDLE)
+        requestNotificationPermissionIfNeeded()
+        DiagnosticLog(this).record("App started version=${BuildConfig.VERSION_NAME}; dashboard V2")
     }
 
     override fun onStart() {
         super.onStart()
-        monitoring = true
-        monitorHandler.removeCallbacks(monitorRunnable)
-        monitorHandler.post(monitorRunnable)
-    }
-
-    override fun onResume() {
-        super.onResume()
-        if (::controller.isInitialized && controller.state == CombinedStressState.IDLE) {
-            applyConfiguration(preferences.loadConfiguration())
-            renderRecentResult(historyStore.list().firstOrNull())
-        }
+        bindService(
+            Intent(this, StressForegroundService::class.java),
+            serviceConnection,
+            Context.BIND_AUTO_CREATE,
+        )
     }
 
     override fun onStop() {
-        monitoring = false
-        monitorHandler.removeCallbacks(monitorRunnable)
-        stopVisualStress()
-        controller.stopAll(StopReason.ACTIVITY_STOPPED)
+        service?.removeObserver(this)
+        if (serviceBound) unbindService(serviceConnection)
+        serviceBound = false
+        service = null
+        handler.removeCallbacksAndMessages(null)
         window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         super.onStop()
     }
 
-    override fun onDestroy() {
-        monitoring = false
-        monitorHandler.removeCallbacksAndMessages(null)
-        controller.close()
-        super.onDestroy()
-    }
-
-    override fun onCombinedStateChanged(state: CombinedStressState) {
-        when (state) {
-            CombinedStressState.RUNNING -> startVisualStressIfSelected()
-            CombinedStressState.STOPPING,
-            CombinedStressState.THERMAL_LIMITED,
-            CombinedStressState.ERROR,
-            CombinedStressState.IDLE,
-            -> stopVisualStress()
-            CombinedStressState.STARTING -> Unit
+    override fun onStressSnapshot(snapshot: CombinedRuntimeSnapshot) {
+        latestSnapshot = snapshot
+        snapshot.currentSession?.configuration?.let { configuration = it }
+        render(snapshot, snapshot.state)
+        val session = snapshot.currentSession
+        if (session != null && session.configuration.gpuEnabled &&
+            session.configuration.gpuMode != GpuMode.COMPUTE &&
+            session.screenOnAtElapsedMs != null &&
+            getSystemService(PowerManager::class.java).isInteractive &&
+            visualAutoLaunchedSessionId != session.sessionId
+        ) {
+            visualAutoLaunchedSessionId = session.sessionId
+            startActivity(Intent(this, GpuVisualActivity::class.java))
         }
-        renderState(state)
-        updateLiveMetrics()
     }
 
-    override fun onGpuInfoAvailable(info: GpuInfo) {
-        gpuDeviceValue.text = info.deviceName
-        gpuVulkanValue.text = info.apiVersionLabel
-        gpuComputeValue.text = if (info.computeQueueSupported) {
-            getString(R.string.supported)
-        } else {
-            getString(R.string.unsupported)
+    override fun onStressStateChanged(state: CombinedStressState) {
+        render(latestSnapshot, state)
+        if (state == CombinedStressState.RUNNING && screenOffPromptPending) {
+            screenOffPromptPending = false
+            showScreenOffCountdown()
         }
     }
 
     override fun onSessionFinished(session: StressSessionSnapshot) {
-        renderSession(session, session)
-        renderRecentResult(session)
+        Toast.makeText(
+            this,
+            getString(R.string.session_finished_toast, stopReasonLabel(session.stopReason)),
+            Toast.LENGTH_LONG,
+        ).show()
     }
 
-    override fun onCombinedError(message: String) {
-        lastErrorValue.text = message
+    override fun onStressError(message: String) {
         Toast.makeText(this, message, Toast.LENGTH_LONG).show()
     }
 
     private fun bindViews() {
-        statusValue = findViewById(R.id.statusValue)
-        elapsedValue = findViewById(R.id.elapsedValue)
-        sessionPresetValue = findViewById(R.id.sessionPresetValue)
-        sessionDurationValue = findViewById(R.id.sessionDurationValue)
-        sessionStopReasonValue = findViewById(R.id.sessionStopReasonValue)
-        sessionPeaksValue = findViewById(R.id.sessionPeaksValue)
-        lastErrorValue = findViewById(R.id.lastErrorValue)
-        cpuStateValue = findViewById(R.id.cpuStateValue)
-        cpuTargetValue = findViewById(R.id.cpuTargetValue)
-        appCpuLoadValue = findViewById(R.id.appCpuLoadValue)
-        coreEquivalentValue = findViewById(R.id.coreEquivalentValue)
-        threadsValue = findViewById(R.id.threadsValue)
-        cpuFrequencyValue = findViewById(R.id.cpuFrequencyValue)
-        memoryStateValue = findViewById(R.id.memoryStateValue)
-        totalRamValue = findViewById(R.id.totalRamValue)
-        availableRamValue = findViewById(R.id.availableRamValue)
-        systemUsedValue = findViewById(R.id.systemUsedValue)
-        appPssValue = findViewById(R.id.appPssValue)
-        nativePssValue = findViewById(R.id.nativePssValue)
-        stressTargetValue = findViewById(R.id.stressTargetValue)
-        allocatedValue = findViewById(R.id.allocatedValue)
-        memoryActivityValue = findViewById(R.id.memoryActivityValue)
-        storageStatusValue = findViewById(R.id.storageStatusValue)
-        storageModeValue = findViewById(R.id.storageModeValue)
-        storageWorkingSetValue = findViewById(R.id.storageWorkingSetValue)
-        storageBytesWrittenValue = findViewById(R.id.storageBytesWrittenValue)
-        storageBytesReadValue = findViewById(R.id.storageBytesReadValue)
-        storageWriteActivityValue = findViewById(R.id.storageWriteActivityValue)
-        storageReadActivityValue = findViewById(R.id.storageReadActivityValue)
-        storageTempFileValue = findViewById(R.id.storageTempFileValue)
-        gpuDeviceValue = findViewById(R.id.gpuDeviceValue)
-        gpuVulkanValue = findViewById(R.id.gpuVulkanValue)
-        gpuComputeValue = findViewById(R.id.gpuComputeValue)
-        gpuTargetValue = findViewById(R.id.gpuTargetValue)
-        gpuStatusValue = findViewById(R.id.gpuStatusValue)
-        gpuDispatchCountValue = findViewById(R.id.gpuDispatchCountValue)
-        gpuDispatchRateValue = findViewById(R.id.gpuDispatchRateValue)
-        gpuWorkTimeValue = findViewById(R.id.gpuWorkTimeValue)
-        gpuComputeActivityValue = findViewById(R.id.gpuComputeActivityValue)
-        gpuOutputValue = findViewById(R.id.gpuOutputValue)
-        gpuModeValue = findViewById(R.id.gpuModeValue)
-        gpuVisualFpsValue = findViewById(R.id.gpuVisualFpsValue)
-        gpuVisualFrameTimeValue = findViewById(R.id.gpuVisualFrameTimeValue)
-        gpuHardwareFrequencyValue = findViewById(R.id.gpuHardwareFrequencyValue)
-        gpuHardwareUtilizationValue = findViewById(R.id.gpuHardwareUtilizationValue)
-        gpuVisualStressView = findViewById(R.id.gpuVisualStressView)
-        thermalProtectionValue = findViewById(R.id.thermalProtectionValue)
-        thermalStatusValue = findViewById(R.id.thermalStatusValue)
-        batteryTemperatureValue = findViewById(R.id.batteryTemperatureValue)
-        startTemperatureValue = findViewById(R.id.startTemperatureValue)
-        peakTemperatureValue = findViewById(R.id.peakTemperatureValue)
-        deltaTemperatureValue = findViewById(R.id.deltaTemperatureValue)
-        thermalMessageValue = findViewById(R.id.thermalMessageValue)
-        highestThermalSensorValue = findViewById(R.id.highestThermalSensorValue)
-        batteryLevelValue = findViewById(R.id.batteryLevelValue)
-        chargingStateValue = findViewById(R.id.chargingStateValue)
-        batteryVoltageValue = findViewById(R.id.batteryVoltageValue)
-        batteryCurrentValue = findViewById(R.id.batteryCurrentValue)
-        batteryPowerValue = findViewById(R.id.batteryPowerValue)
-        configurationPanel = findViewById(R.id.configurationPanel)
-        presetGroup = findViewById(R.id.presetGroup)
-        cpuLoadGroup = findViewById(R.id.cpuLoadGroup)
-        gpuLoadGroup = findViewById(R.id.gpuLoadGroup)
-        gpuModeGroup = findViewById(R.id.gpuModeGroup)
-        ramTargetGroup = findViewById(R.id.ramTargetGroup)
-        storageModeGroup = findViewById(R.id.storageModeGroup)
-        storageLevelGroup = findViewById(R.id.storageLevelGroup)
-        resourceCpu = findViewById(R.id.resourceCpu)
-        resourceGpu = findViewById(R.id.resourceGpu)
-        resourceMemory = findViewById(R.id.resourceMemory)
-        resourceStorage = findViewById(R.id.resourceStorage)
-        durationSpinner = findViewById(R.id.durationSpinner)
+        topTitle = findViewById(R.id.topTitle)
+        stateValue = findViewById(R.id.dashboardState)
+        thermalValue = findViewById(R.id.dashboardThermal)
+        elapsedValue = findViewById(R.id.dashboardElapsed)
+        cpuCard = findViewById(R.id.cpuCard)
+        gpuCard = findViewById(R.id.gpuCard)
+        memoryCard = findViewById(R.id.memoryCard)
+        storageCard = findViewById(R.id.storageCard)
+        presetGroup = findViewById(R.id.compactPresetGroup)
+        durationSpinner = findViewById(R.id.compactDuration)
+        screenModeGroup = findViewById(R.id.screenModeGroup)
         startButton = findViewById(R.id.startButton)
         stopButton = findViewById(R.id.stopButton)
-        resultSummaryValue = findViewById(R.id.resultSummaryValue)
-        exportResultButton = findViewById(R.id.exportResultButton)
     }
 
-    private fun installSystemBarInsets() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
-        findViewById<View>(R.id.rootScroll).setOnApplyWindowInsetsListener { view, insets ->
-            val systemBars = insets.getInsets(WindowInsets.Type.systemBars())
-            view.setPadding(systemBars.left, systemBars.top, systemBars.right, systemBars.bottom)
-            insets
+    private fun installListeners() {
+        findViewById<Button>(R.id.settingsButton).setOnClickListener {
+            startActivity(Intent(this, SettingsActivity::class.java))
         }
-    }
-
-    private fun renderDeviceInfo(info: DeviceInfo) {
-        findViewById<TextView>(R.id.manufacturerValue).text = info.manufacturer
-        findViewById<TextView>(R.id.modelValue).text = info.model
-        findViewById<TextView>(R.id.androidValue).text = info.androidVersion
-        findViewById<TextView>(R.id.sdkValue).text = getString(R.string.value_integer, info.sdk)
-        findViewById<TextView>(R.id.abiValue).text = info.primaryAbi
-        findViewById<TextView>(R.id.cpuCoresValue).text =
-            getString(R.string.value_integer, info.logicalCoreCount)
-    }
-
-    private fun installConfigurationListeners() {
-        presetGroup.setOnCheckedChangeListener { _, checkedId ->
-            if (applyingPreset) return@setOnCheckedChangeListener
-            when (checkedId) {
-                R.id.presetBalanced -> applyPreset(StressPreset.BALANCED)
-                R.id.presetHigh -> applyPreset(StressPreset.HIGH)
-                R.id.presetExtreme -> applyPreset(StressPreset.EXTREME)
-                else -> renderConfigurationPreview()
+        findViewById<Button>(R.id.monitorNavButton).setOnClickListener {
+            startActivity(Intent(this, MonitorActivity::class.java))
+        }
+        findViewById<Button>(R.id.historyNavButton).setOnClickListener {
+            startActivity(Intent(this, HistoryActivity::class.java))
+        }
+        cpuCard.setOnClickListener {
+            if (isIdle()) showCpuDialog() else openMonitor()
+        }
+        gpuCard.setOnClickListener {
+            if (isIdle()) showGpuDialog() else if (
+                configuration.gpuEnabled && configuration.gpuMode != GpuMode.COMPUTE
+            ) {
+                startActivity(Intent(this, GpuVisualActivity::class.java))
+            } else openMonitor()
+        }
+        memoryCard.setOnClickListener {
+            if (isIdle()) showMemoryDialog() else openMonitor()
+        }
+        storageCard.setOnClickListener {
+            if (isIdle()) showStorageDialog() else openMonitor()
+        }
+        presetGroup.setOnCheckedChangeListener { _, id ->
+            if (applyingControls || !isIdle()) return@setOnCheckedChangeListener
+            val preset = when (id) {
+                R.id.presetBalanced -> StressPreset.BALANCED
+                R.id.presetHigh -> StressPreset.HIGH
+                R.id.presetExtreme -> StressPreset.EXTREME
+                else -> StressPreset.CUSTOM
+            }
+            if (preset != StressPreset.CUSTOM) {
+                configuration = PresetConfigurations.create(preset, selectedDuration()).copy(
+                    screenMode = selectedScreenMode(),
+                )
+                saveAndRenderConfiguration()
             }
         }
-        val manualGroupListener = RadioGroup.OnCheckedChangeListener { _, _ ->
-            markCustomPreset()
+        screenModeGroup.setOnCheckedChangeListener { _, _ ->
+            if (applyingControls || !isIdle()) return@setOnCheckedChangeListener
+            configuration = configuration.copy(screenMode = selectedScreenMode())
+            saveAndRenderConfiguration()
         }
-        cpuLoadGroup.setOnCheckedChangeListener(manualGroupListener)
-        gpuLoadGroup.setOnCheckedChangeListener(manualGroupListener)
-        gpuModeGroup.setOnCheckedChangeListener(manualGroupListener)
-        ramTargetGroup.setOnCheckedChangeListener(manualGroupListener)
-        storageModeGroup.setOnCheckedChangeListener(manualGroupListener)
-        storageLevelGroup.setOnCheckedChangeListener(manualGroupListener)
-        val resourceListener = View.OnClickListener { markCustomPreset() }
-        resourceCpu.setOnClickListener(resourceListener)
-        resourceGpu.setOnClickListener(resourceListener)
-        resourceMemory.setOnClickListener(resourceListener)
-        resourceStorage.setOnClickListener {
-            if (resourceStorage.isChecked && preferences.confirmStorageStress) {
-                resourceStorage.isChecked = false
-                AlertDialog.Builder(this)
-                    .setTitle(R.string.storage_warning_title)
-                    .setMessage(R.string.storage_warning_message)
-                    .setPositiveButton(R.string.enable) { _, _ ->
-                        resourceStorage.isChecked = true
-                        markCustomPreset()
-                    }
-                    .setNeutralButton(R.string.enable_dont_ask) { _, _ ->
-                        preferences.confirmStorageStress = false
-                        resourceStorage.isChecked = true
-                        markCustomPreset()
-                    }
-                    .setNegativeButton(R.string.cancel) { _, _ -> markCustomPreset() }
-                    .show()
-            } else {
-                markCustomPreset()
-            }
+        startButton.setOnClickListener { requestStart() }
+        stopButton.setOnClickListener {
+            (service?.let { it.stopSession(StopReason.USER_STOP) }
+                ?: StressForegroundService.stop(this))
         }
     }
 
-    private fun configureDurationSpinner() {
-        val adapter = ArrayAdapter(
+    private fun configureDuration() {
+        durationSpinner.adapter = ArrayAdapter(
             this,
             android.R.layout.simple_spinner_item,
-            durations.map { durationLabel(it) },
-        )
-        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
-        durationSpinner.adapter = adapter
-        durationSpinner.setSelection(durations.indexOf(StressDuration.MINUTES_5))
-        durationSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
-            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
-                renderConfigurationPreview()
-            }
-
-            override fun onNothingSelected(parent: AdapterView<*>?) = Unit
-        }
-    }
-
-    private fun applyPreset(preset: StressPreset) {
-        applyingPreset = true
-        presetGroup.check(
-            when (preset) {
-                StressPreset.BALANCED -> R.id.presetBalanced
-                StressPreset.HIGH -> R.id.presetHigh
-                StressPreset.EXTREME -> R.id.presetExtreme
-                StressPreset.CUSTOM -> R.id.presetCustom
-            },
-        )
-        resourceCpu.isChecked = true
-        resourceGpu.isChecked = true
-        resourceMemory.isChecked = true
-        resourceStorage.isChecked = false
-        gpuModeGroup.check(R.id.gpuModeCompute)
-        when (preset) {
-            StressPreset.BALANCED -> {
-                cpuLoadGroup.check(R.id.cpu50)
-                gpuLoadGroup.check(R.id.gpu50)
-                ramTargetGroup.check(R.id.ram512)
-            }
-            StressPreset.HIGH -> {
-                cpuLoadGroup.check(R.id.cpu75)
-                gpuLoadGroup.check(R.id.gpu75)
-                ramTargetGroup.check(R.id.ramAuto)
-            }
-            StressPreset.EXTREME -> {
-                cpuLoadGroup.check(R.id.cpu100)
-                gpuLoadGroup.check(R.id.gpu100)
-                ramTargetGroup.check(R.id.ramAuto)
-            }
-            StressPreset.CUSTOM -> Unit
-        }
-        applyingPreset = false
-        renderConfigurationPreview()
-    }
-
-    private fun applyConfiguration(configuration: CombinedStressConfiguration) {
-        if (!::durationSpinner.isInitialized || durationSpinner.adapter == null) return
-        applyingPreset = true
-        presetGroup.check(
-            when (configuration.preset) {
-                StressPreset.BALANCED -> R.id.presetBalanced
-                StressPreset.HIGH -> R.id.presetHigh
-                StressPreset.EXTREME -> R.id.presetExtreme
-                StressPreset.CUSTOM -> R.id.presetCustom
-            },
-        )
-        resourceCpu.isChecked = configuration.cpuEnabled
-        resourceGpu.isChecked = configuration.gpuEnabled
-        resourceMemory.isChecked = configuration.memoryEnabled
-        resourceStorage.isChecked = configuration.storageEnabled
-        cpuLoadGroup.check(
-            when (configuration.cpuTargetPercent) {
-                25 -> R.id.cpu25
-                50 -> R.id.cpu50
-                75 -> R.id.cpu75
-                else -> R.id.cpu100
-            },
-        )
-        gpuLoadGroup.check(
-            when (configuration.gpuTargetPercent) {
-                25 -> R.id.gpu25
-                50 -> R.id.gpu50
-                75 -> R.id.gpu75
-                else -> R.id.gpu100
-            },
-        )
-        gpuModeGroup.check(
-            when (configuration.gpuMode) {
-                GpuMode.COMPUTE -> R.id.gpuModeCompute
-                GpuMode.VISUAL -> R.id.gpuModeVisual
-                GpuMode.MIXED -> R.id.gpuModeMixed
-            },
-        )
-        ramTargetGroup.check(
-            when (configuration.memoryTarget) {
-                MemoryTarget.MIB_256 -> R.id.ram256
-                MemoryTarget.MIB_512 -> R.id.ram512
-                MemoryTarget.GIB_1 -> R.id.ram1gb
-                MemoryTarget.AUTO -> R.id.ramAuto
-            },
-        )
-        storageModeGroup.check(
-            when (configuration.storageMode) {
-                StorageMode.READ -> R.id.storageRead
-                StorageMode.WRITE -> R.id.storageWrite
-                StorageMode.MIXED -> R.id.storageMixed
-            },
-        )
-        storageLevelGroup.check(
-            when (configuration.storageLevel) {
-                StorageLevel.LOW -> R.id.storageLow
-                StorageLevel.MEDIUM -> R.id.storageMedium
-                StorageLevel.HIGH -> R.id.storageHigh
-            },
-        )
+            durations.map(::durationLabel),
+        ).apply { setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
         durationSpinner.setSelection(durations.indexOf(configuration.duration).coerceAtLeast(0))
-        applyingPreset = false
-        renderConfigurationPreview()
+        durationSpinner.onItemSelectedListener = SimpleItemSelectedListener {
+            if (!applyingControls && isIdle()) {
+                configuration = configuration.copy(duration = selectedDuration())
+                preferences.saveConfiguration(configuration)
+            }
+        }
     }
 
-    private fun markCustomPreset() {
-        if (applyingPreset) return
-        applyingPreset = true
-        presetGroup.check(R.id.presetCustom)
-        applyingPreset = false
-        renderConfigurationPreview()
-    }
-
-    private fun startSession() {
-        if (!nativeAvailable || controller.state != CombinedStressState.IDLE) return
-        if (!resourceCpu.isChecked && !resourceGpu.isChecked && !resourceMemory.isChecked &&
-            !resourceStorage.isChecked
+    private fun requestStart() {
+        configuration = configuration.copy(
+            duration = selectedDuration(),
+            screenMode = selectedScreenMode(),
+        )
+        if (!configuration.cpuEnabled && !configuration.gpuEnabled &&
+            !configuration.memoryEnabled && !configuration.storageEnabled
         ) {
             Toast.makeText(this, R.string.select_resource, Toast.LENGTH_LONG).show()
             return
         }
-        controller.start(configurationFromControls())
-    }
-
-    private fun configurationFromControls(): CombinedStressConfiguration =
-        CombinedStressConfiguration(
-            preset = selectedPreset(),
-            cpuEnabled = resourceCpu.isChecked,
-            gpuEnabled = resourceGpu.isChecked,
-            memoryEnabled = resourceMemory.isChecked,
-            storageEnabled = resourceStorage.isChecked,
-            cpuTargetPercent = selectedCpuTarget(),
-            gpuTargetPercent = selectedGpuTarget(),
-            memoryTarget = selectedMemoryTarget(),
-            storageMode = selectedStorageMode(),
-            storageLevel = selectedStorageLevel(),
-            gpuMode = selectedGpuMode(),
-            duration = durations.getOrElse(durationSpinner.selectedItemPosition) {
-                StressDuration.MINUTES_5
-            },
-        )
-
-    private fun selectedPreset(): StressPreset = when (presetGroup.checkedRadioButtonId) {
-        R.id.presetBalanced -> StressPreset.BALANCED
-        R.id.presetHigh -> StressPreset.HIGH
-        R.id.presetExtreme -> StressPreset.EXTREME
-        else -> StressPreset.CUSTOM
-    }
-
-    private fun selectedCpuTarget(): Int = when (cpuLoadGroup.checkedRadioButtonId) {
-        R.id.cpu25 -> 25
-        R.id.cpu50 -> 50
-        R.id.cpu75 -> 75
-        else -> 100
-    }
-
-    private fun selectedGpuTarget(): Int = when (gpuLoadGroup.checkedRadioButtonId) {
-        R.id.gpu25 -> 25
-        R.id.gpu50 -> 50
-        R.id.gpu75 -> 75
-        else -> 100
-    }
-
-    private fun selectedGpuMode(): GpuMode = when (gpuModeGroup.checkedRadioButtonId) {
-        R.id.gpuModeVisual -> GpuMode.VISUAL
-        R.id.gpuModeMixed -> GpuMode.MIXED
-        else -> GpuMode.COMPUTE
-    }
-
-    private fun selectedMemoryTarget(): MemoryTarget = when (ramTargetGroup.checkedRadioButtonId) {
-        R.id.ram256 -> MemoryTarget.MIB_256
-        R.id.ram512 -> MemoryTarget.MIB_512
-        R.id.ram1gb -> MemoryTarget.GIB_1
-        else -> MemoryTarget.AUTO
-    }
-
-    private fun selectedStorageMode(): StorageMode = when (storageModeGroup.checkedRadioButtonId) {
-        R.id.storageRead -> StorageMode.READ
-        R.id.storageWrite -> StorageMode.WRITE
-        else -> StorageMode.MIXED
-    }
-
-    private fun selectedStorageLevel(): StorageLevel = when (
-        storageLevelGroup.checkedRadioButtonId
-    ) {
-        R.id.storageMedium -> StorageLevel.MEDIUM
-        R.id.storageHigh -> StorageLevel.HIGH
-        else -> StorageLevel.LOW
-    }
-
-    private fun updateLiveMetrics() {
-        val visual = gpuVisualStressView.snapshot()
-        controller.updateVisualMetrics(visual.framesPerSecond, visual.frameTimeNanos)
-        val snapshot = controller.runtimeSnapshot()
-        lastSnapshot = snapshot
-        renderState(snapshot.state)
-        renderRuntime(snapshot)
-    }
-
-    private fun renderRuntime(snapshot: CombinedRuntimeSnapshot) {
-        elapsedValue.text = formatElapsed(snapshot.elapsedTimeMs)
-        appCpuLoadValue.text = formatPercent(snapshot.cpuLoadPercent, 1)
-        coreEquivalentValue.text = formatPercent(snapshot.coreEquivalentPercent, 0)
-        threadsValue.text = getString(R.string.value_integer, snapshot.cpuThreadCount)
-        cpuFrequencyValue.text = snapshot.hardware.cpuFrequencies
-            .joinToString(" · ") { "${it.policy} ${frequencyDisplay(it.currentHz)}" }
-            .ifBlank { getString(R.string.unsupported_value) }
-
-        totalRamValue.text = ByteFormatter.formatBytes(snapshot.memory.totalBytes)
-        availableRamValue.text = ByteFormatter.formatBytes(snapshot.memory.availableBytes)
-        systemUsedValue.text = ByteFormatter.formatBytes(snapshot.memory.systemUsedBytes)
-        appPssValue.text = ByteFormatter.formatBytes(snapshot.memory.appPssBytes)
-        nativePssValue.text = ByteFormatter.formatBytes(snapshot.memory.nativePssBytes)
-        allocatedValue.text = ByteFormatter.formatBytes(snapshot.allocatedMemoryBytes)
-        memoryActivityValue.text = ByteFormatter.formatRate(snapshot.memoryActivityBytesPerSecond)
-
-        val storageState = if (
-            snapshot.currentSession?.configuration?.storageEnabled == false &&
-            snapshot.storage.status == StorageStressStatus.STOPPED
+        if (configuration.screenMode == ScreenMode.OFF && configuration.gpuEnabled &&
+            configuration.gpuMode == GpuMode.VISUAL
         ) {
-            "OFF"
+            AlertDialog.Builder(this)
+                .setTitle(R.string.screen_off_visual_title)
+                .setMessage(R.string.screen_off_visual_message)
+                .setPositiveButton(R.string.start_session) { _, _ -> startSession() }
+                .setNegativeButton(R.string.cancel, null)
+                .show()
         } else {
-            snapshot.storage.status.name
+            startSession()
         }
-        storageStatusValue.text = resourceStateLabel(storageState)
-        storageModeValue.text = snapshot.storage.mode.name
-        storageWorkingSetValue.text = ByteFormatter.formatBytes(snapshot.storage.workingSetBytes)
-        storageBytesWrittenValue.text = ByteFormatter.formatBytes(snapshot.storage.bytesWritten)
-        storageBytesReadValue.text = ByteFormatter.formatBytes(snapshot.storage.bytesRead)
-        storageWriteActivityValue.text = ByteFormatter.formatRate(
-            snapshot.storage.writeActivityBytesPerSecond,
-        )
-        storageReadActivityValue.text = ByteFormatter.formatRate(
-            snapshot.storage.readActivityBytesPerSecond,
-        )
-        storageTempFileValue.text = ByteFormatter.formatBytes(snapshot.storage.temporaryFileBytes)
-        storageStatusValue.setTextColor(resourceColor(storageState))
-
-        gpuDispatchCountValue.text = getString(R.string.value_integer, snapshot.gpu.dispatchCount)
-        gpuDispatchRateValue.text = GpuMetricsFormatter.formatDispatchRate(snapshot.gpuDispatchRate)
-        gpuComputeActivityValue.text = GpuMetricsFormatter.formatWorkGroupRate(
-            snapshot.gpuWorkGroupsPerSecond,
-        )
-        gpuWorkTimeValue.text = GpuMetricsFormatter.formatGpuWorkTime(
-            snapshot.gpu.gpuWorkNanos,
-            controller.gpuInfo?.timestampSupported == true,
-        )
-        gpuOutputValue.text = GpuMetricsFormatter.formatChecksum(snapshot.gpu.outputChecksum)
-        gpuVisualFpsValue.text = if (snapshot.visualFps > 0.0) {
-            getString(R.string.fps_value, snapshot.visualFps)
-        } else {
-            getString(R.string.not_available)
-        }
-        gpuVisualFrameTimeValue.text = if (snapshot.visualFrameTimeNanos > 0.0) {
-            getString(R.string.frame_time_value, snapshot.visualFrameTimeNanos / 1_000_000.0)
-        } else {
-            getString(R.string.not_available)
-        }
-        gpuHardwareFrequencyValue.text = frequencyDisplay(snapshot.hardware.gpu.frequencyHz)
-        gpuHardwareUtilizationValue.text = snapshot.hardware.gpu.utilizationPercent?.let {
-            formatPercent(it, 1)
-        } ?: getString(R.string.unsupported_value)
-
-        snapshot.hardware.highestThermalZone?.let { sensor ->
-            highestThermalSensorValue.text = getString(
-                R.string.sensor_value,
-                sensor.name,
-                TemperatureFormatter.format(sensor.temperatureCelsius),
-            )
-        } ?: run { highestThermalSensorValue.text = getString(R.string.unsupported_value) }
-        val battery = snapshot.hardware.battery
-        batteryLevelValue.text = battery.levelPercent?.let {
-            getString(R.string.battery_level_value, it)
-        } ?: getString(R.string.unsupported_value)
-        chargingStateValue.text = chargingStateDisplay(battery.chargingState)
-        batteryVoltageValue.text = voltageDisplay(battery.voltageVolts)
-        batteryCurrentValue.text = currentDisplay(battery.currentAmpsRaw)
-        batteryPowerValue.text = powerDisplay(battery.estimatedBatteryPowerWatts)
-
-        val configuration = snapshot.currentSession?.configuration ?: configurationFromControls()
-        cpuTargetValue.text = getString(R.string.percent_value, configuration.cpuTargetPercent)
-        gpuTargetValue.text = getString(R.string.percent_value, configuration.gpuTargetPercent)
-        gpuModeValue.text = gpuModeLabel(configuration.gpuMode)
-        stressTargetValue.text = snapshot.currentSession?.let {
-            ByteFormatter.formatBytes(it.resolvedMemoryTargetBytes)
-        } ?: formatMemoryTarget(configuration.memoryTarget, snapshot.memory.availableBytes)
-        renderResourceStates(configuration, snapshot)
-        renderThermal(snapshot)
-        renderSession(snapshot.currentSession, snapshot.lastSession)
     }
 
-    private fun renderResourceStates(
-        configuration: CombinedStressConfiguration,
-        snapshot: CombinedRuntimeSnapshot,
-    ) {
-        val cpuState = resourceState(
-            configuration.cpuEnabled,
-            snapshot.state,
-            snapshot.cpuThreadCount > 0,
-        )
-        val memoryState = resourceState(
-            configuration.memoryEnabled,
-            snapshot.state,
-            snapshot.allocatedMemoryBytes > 0L,
-        )
-        val visualRunning = gpuVisualStressView.snapshot().running
-        val gpuState = if (!configuration.gpuEnabled &&
-            snapshot.state != CombinedStressState.STARTING
+    private fun startSession() {
+        preferences.saveConfiguration(configuration)
+        screenOffPromptPending = configuration.screenMode == ScreenMode.OFF
+        StressForegroundService.start(this, configuration)
+        if (configuration.screenMode == ScreenMode.ON && configuration.gpuEnabled &&
+            configuration.gpuMode != GpuMode.COMPUTE
         ) {
-            "OFF"
-        } else {
-            when (snapshot.state) {
-                CombinedStressState.STARTING -> "STARTING"
-                CombinedStressState.STOPPING -> "STOPPING"
-                CombinedStressState.THERMAL_LIMITED -> "THERMAL_LIMITED"
-                CombinedStressState.ERROR -> "ERROR"
-                CombinedStressState.RUNNING -> when (configuration.gpuMode) {
-                    GpuMode.COMPUTE -> snapshot.gpu.status.name
-                    GpuMode.VISUAL -> if (visualRunning) "RUNNING" else "ERROR"
-                    GpuMode.MIXED -> if (
-                        visualRunning && snapshot.gpu.status == GpuNativeStatus.RUNNING
-                    ) "RUNNING" else "ERROR"
+            startActivity(Intent(this, GpuVisualActivity::class.java))
+        }
+    }
+
+    private fun showScreenOffCountdown() {
+        var remaining = 3
+        val dialog = AlertDialog.Builder(this)
+            .setTitle(getString(R.string.screen_off_countdown, remaining))
+            .setMessage(R.string.screen_off_preparing)
+            .setPositiveButton(R.string.ok, null)
+            .setNegativeButton(R.string.open_monitor) { _, _ -> openMonitor() }
+            .create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).isEnabled = false
+            val tick = object : Runnable {
+                override fun run() {
+                    if (!dialog.isShowing) return
+                    remaining -= 1
+                    if (remaining > 0) {
+                        dialog.setTitle(getString(R.string.screen_off_countdown, remaining))
+                        handler.postDelayed(this, 1_000L)
+                    } else {
+                        dialog.setTitle(R.string.screen_off_manual_title)
+                        dialog.setMessage(getString(R.string.screen_off_manual_message))
+                        dialog.getButton(AlertDialog.BUTTON_POSITIVE).isEnabled = true
+                    }
                 }
-                else -> snapshot.gpu.status.name
+            }
+            handler.postDelayed(tick, 1_000L)
+        }
+        dialog.show()
+    }
+
+    private fun showCpuDialog() {
+        val enabled = CheckBox(this).apply {
+            setText(R.string.enabled)
+            isChecked = configuration.cpuEnabled
+        }
+        val target = choiceGroup(
+            listOf(25 to R.string.load_25, 50 to R.string.load_50, 75 to R.string.load_75, 100 to R.string.load_100),
+            configuration.cpuTargetPercent,
+        )
+        showConfigDialog(R.string.resource_cpu, enabled, target) {
+            configuration = configuration.copy(
+                preset = StressPreset.CUSTOM,
+                cpuEnabled = enabled.isChecked,
+                cpuTargetPercent = target.checkedRadioButtonId,
+            )
+        }
+    }
+
+    private fun showGpuDialog() {
+        val enabled = CheckBox(this).apply {
+            setText(R.string.enabled)
+            isChecked = configuration.gpuEnabled
+        }
+        val mode = choiceGroup(
+            listOf(
+                100 + GpuMode.COMPUTE.ordinal to R.string.gpu_mode_compute,
+                100 + GpuMode.VISUAL.ordinal to R.string.gpu_mode_visual,
+                100 + GpuMode.MIXED.ordinal to R.string.gpu_mode_mixed,
+            ),
+            100 + configuration.gpuMode.ordinal,
+        )
+        val target = choiceGroup(
+            listOf(25 to R.string.load_25, 50 to R.string.load_50, 75 to R.string.load_75, 100 to R.string.load_100),
+            configuration.gpuTargetPercent,
+        )
+        showConfigDialog(R.string.resource_gpu, enabled, labeledGroup(R.string.gpu_mode, mode), target) {
+            configuration = configuration.copy(
+                preset = StressPreset.CUSTOM,
+                gpuEnabled = enabled.isChecked,
+                gpuMode = GpuMode.entries[mode.checkedRadioButtonId - 100],
+                gpuTargetPercent = target.checkedRadioButtonId,
+            )
+        }
+    }
+
+    private fun showMemoryDialog() {
+        val enabled = CheckBox(this).apply {
+            setText(R.string.enabled)
+            isChecked = configuration.memoryEnabled
+        }
+        val choices = choiceGroup(
+            listOf(
+                100 + MemoryTarget.MIB_256.ordinal to R.string.ram_256,
+                100 + MemoryTarget.MIB_512.ordinal to R.string.ram_512,
+                100 + MemoryTarget.GIB_1.ordinal to R.string.ram_1gb,
+                100 + MemoryTarget.AUTO.ordinal to R.string.ram_auto,
+            ),
+            100 + configuration.memoryTarget.ordinal,
+        )
+        showConfigDialog(R.string.resource_memory, enabled, choices) {
+            configuration = configuration.copy(
+                preset = StressPreset.CUSTOM,
+                memoryEnabled = enabled.isChecked,
+                memoryTarget = MemoryTarget.entries[choices.checkedRadioButtonId - 100],
+            )
+        }
+    }
+
+    private fun showStorageDialog() {
+        val enabled = CheckBox(this).apply {
+            setText(R.string.enabled)
+            isChecked = configuration.storageEnabled
+        }
+        val mode = choiceGroup(
+            listOf(
+                100 + StorageMode.READ.ordinal to R.string.storage_read,
+                100 + StorageMode.MIXED.ordinal to R.string.storage_mixed,
+                100 + StorageMode.WRITE.ordinal to R.string.storage_write,
+            ),
+            100 + configuration.storageMode.ordinal,
+        )
+        val level = choiceGroup(
+            listOf(
+                200 + StorageLevel.LOW.ordinal to R.string.storage_low,
+                200 + StorageLevel.MEDIUM.ordinal to R.string.storage_medium,
+                200 + StorageLevel.HIGH.ordinal to R.string.storage_high,
+            ),
+            200 + configuration.storageLevel.ordinal,
+        )
+        val wasEnabled = configuration.storageEnabled
+        showConfigDialog(
+            R.string.resource_storage,
+            enabled,
+            labeledGroup(R.string.storage_mode, mode),
+            labeledGroup(R.string.storage_level, level),
+        ) {
+            val apply = {
+                configuration = configuration.copy(
+                    preset = StressPreset.CUSTOM,
+                    storageEnabled = enabled.isChecked,
+                    storageMode = StorageMode.entries[mode.checkedRadioButtonId - 100],
+                    storageLevel = StorageLevel.entries[level.checkedRadioButtonId - 200],
+                )
+                saveAndRenderConfiguration()
+            }
+            if (!wasEnabled && enabled.isChecked && preferences.confirmStorageStress) {
+                AlertDialog.Builder(this)
+                    .setTitle(R.string.storage_warning_title)
+                    .setMessage(R.string.storage_warning_message)
+                    .setPositiveButton(R.string.enable) { _, _ -> apply() }
+                    .setNegativeButton(R.string.cancel, null)
+                    .show()
+                false
+            } else {
+                apply()
+                false
             }
         }
-        cpuStateValue.text = resourceStateLabel(cpuState)
-        memoryStateValue.text = resourceStateLabel(memoryState)
-        gpuStatusValue.text = resourceStateLabel(gpuState)
-        cpuStateValue.setTextColor(resourceColor(cpuState))
-        memoryStateValue.setTextColor(resourceColor(memoryState))
-        gpuStatusValue.setTextColor(resourceColor(gpuState))
     }
 
-    private fun resourceState(
-        enabled: Boolean,
-        state: CombinedStressState,
-        nativeRunning: Boolean,
-    ): String {
-        if (!enabled && state != CombinedStressState.STARTING) return "OFF"
-        return when (state) {
-            CombinedStressState.STARTING -> "STARTING"
-            CombinedStressState.RUNNING -> if (nativeRunning) "RUNNING" else "ERROR"
-            CombinedStressState.STOPPING -> "STOPPING"
-            CombinedStressState.THERMAL_LIMITED -> "THERMAL_LIMITED"
-            CombinedStressState.ERROR -> "ERROR"
-            CombinedStressState.IDLE -> "OFF"
+    private fun showConfigDialog(title: Int, vararg views: View, onApply: () -> Unit) {
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            val padding = (20 * resources.displayMetrics.density).toInt()
+            setPadding(padding, 0, padding, 0)
+            views.forEach(::addView)
         }
+        AlertDialog.Builder(this)
+            .setTitle(title)
+            .setView(container)
+            .setPositiveButton(R.string.apply) { _, _ ->
+                onApply()
+                saveAndRenderConfiguration()
+            }
+            .setNegativeButton(R.string.cancel, null)
+            .show()
     }
 
-    private fun renderThermal(snapshot: CombinedRuntimeSnapshot) {
-        thermalProtectionValue.setTextColor(getColor(R.color.safe))
-        thermalStatusValue.text = thermalStatusDisplay(snapshot.thermal.status)
-        thermalStatusValue.setTextColor(thermalColor(snapshot.thermal.status))
-        batteryTemperatureValue.text = formatTemperature(
-            snapshot.thermal.batteryTemperatureCelsius,
-        )
-        val session = snapshot.currentSession ?: snapshot.lastSession
-        startTemperatureValue.text = formatTemperature(session?.startBatteryTemperatureCelsius)
-        peakTemperatureValue.text = formatTemperature(session?.peakBatteryTemperatureCelsius)
-        val comparisonTemperature = if (snapshot.currentSession != null) {
-            snapshot.thermal.batteryTemperatureCelsius
-        } else {
-            session?.peakBatteryTemperatureCelsius
+    private fun choiceGroup(options: List<Pair<Int, Int>>, checked: Int): RadioGroup =
+        RadioGroup(this).apply {
+            orientation = RadioGroup.VERTICAL
+            options.forEach { (id, label) ->
+                addView(RadioButton(this@MainActivity).apply {
+                    this.id = id
+                    setText(label)
+                    isChecked = id == checked
+                })
+            }
         }
-        deltaTemperatureValue.text = if (
-            session?.startBatteryTemperatureCelsius != null && comparisonTemperature != null
-        ) {
-            String.format(
-                Locale.US,
-                "%+.1f °C",
-                comparisonTemperature - session.startBatteryTemperatureCelsius,
-            )
-        } else {
-            getString(R.string.not_available)
+
+    private fun labeledGroup(label: Int, group: RadioGroup): LinearLayout =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(TextView(this@MainActivity).apply {
+                setText(label)
+                setTextColor(getColor(R.color.text_secondary))
+            })
+            addView(group)
         }
-        val messageResource = when {
-            snapshot.thermal.status >= PowerManager.THERMAL_STATUS_CRITICAL ->
-                R.string.thermal_critical
-            snapshot.thermal.status >= PowerManager.THERMAL_STATUS_SEVERE ->
-                R.string.thermal_severe
-            snapshot.thermal.status >= PowerManager.THERMAL_STATUS_MODERATE ->
-                R.string.thermal_moderate
-            else -> R.string.thermal_normal
-        }
-        thermalMessageValue.setText(messageResource)
-        val warming = snapshot.thermal.status >= PowerManager.THERMAL_STATUS_MODERATE
-        thermalMessageValue.setTextColor(
-            when {
-                snapshot.thermal.status >= PowerManager.THERMAL_STATUS_SEVERE ->
-                    getColor(R.color.danger)
-                warming -> getColor(R.color.warning)
-                else -> getColor(R.color.text_secondary)
+
+    private fun saveAndRenderConfiguration() {
+        preferences.saveConfiguration(configuration)
+        applyConfiguration(configuration)
+        render(latestSnapshot, service?.state ?: CombinedStressState.IDLE)
+    }
+
+    private fun applyConfiguration(value: CombinedStressConfiguration) {
+        applyingControls = true
+        configuration = value
+        presetGroup.check(
+            when (value.preset) {
+                StressPreset.BALANCED -> R.id.presetBalanced
+                StressPreset.HIGH -> R.id.presetHigh
+                StressPreset.EXTREME -> R.id.presetExtreme
+                StressPreset.CUSTOM -> R.id.presetCustom
             },
         )
-    }
-
-    private fun renderSession(
-        current: StressSessionSnapshot?,
-        last: StressSessionSnapshot?,
-    ) {
-        val session = current ?: last
-        val configuration = current?.configuration ?: if (last == null) {
-            configurationFromControls()
-        } else {
-            last.configuration
-        }
-        sessionPresetValue.text = presetLabel(configuration.preset)
-        sessionDurationValue.text = durationLabel(configuration.duration)
-        sessionStopReasonValue.text = stopReasonLabel(session?.stopReason)
-        sessionPeaksValue.text = session?.let {
-            getString(
-                R.string.compact_peaks,
-                it.peakCpuLoadPercent,
-                it.peakDispatchRate,
-                ByteFormatter.formatBytes(it.peakAppPssBytes),
-            )
-        } ?: getString(R.string.waiting)
-        lastErrorValue.text = session?.lastError ?: controller.lastError ?: getString(R.string.none)
-        if (current == null) renderRecentResult(last)
-    }
-
-    private fun renderConfigurationPreview() {
-        if (!::durationSpinner.isInitialized || durationSpinner.adapter == null) return
-        val configuration = configurationFromControls()
-        val availableBytes = lastSnapshot?.memory?.availableBytes ?: 0L
-        if (controller.state == CombinedStressState.IDLE) {
-            sessionPresetValue.text = presetLabel(configuration.preset)
-            sessionDurationValue.text = durationLabel(configuration.duration)
-            cpuTargetValue.text = getString(R.string.percent_value, configuration.cpuTargetPercent)
-            gpuTargetValue.text = getString(R.string.percent_value, configuration.gpuTargetPercent)
-            gpuModeValue.text = gpuModeLabel(configuration.gpuMode)
-            stressTargetValue.text = formatMemoryTarget(configuration.memoryTarget, availableBytes)
-        }
-        if (!applyingPreset) preferences.saveConfiguration(configuration)
-        startButton.setText(
-            if (configuration.preset == StressPreset.EXTREME &&
-                configuration.cpuEnabled && configuration.gpuEnabled &&
-                configuration.memoryEnabled && !configuration.storageEnabled
-            ) {
-                R.string.start_extreme
-            } else {
-                R.string.start_session
-            },
+        screenModeGroup.check(
+            if (value.screenMode == ScreenMode.OFF) R.id.screenModeOff else R.id.screenModeOn,
         )
+        durationSpinner.setSelection(durations.indexOf(value.duration).coerceAtLeast(0))
+        applyingControls = false
     }
 
-    private fun renderState(state: CombinedStressState) {
-        statusValue.text = combinedStateLabel(state)
-        statusValue.setTextColor(
+    private fun render(snapshot: CombinedRuntimeSnapshot?, state: CombinedStressState) {
+        val running = state != CombinedStressState.IDLE
+        val active = snapshot?.currentSession?.configuration ?: configuration
+        topTitle.text = if (running) {
+            getString(R.string.running_top_title, presetLabel(active.preset), DurationFormatter.format(snapshot?.elapsedTimeMs ?: 0L))
+        } else getString(R.string.dashboard_title)
+        stateValue.text = combinedStateLabel(state)
+        stateValue.setTextColor(
             when (state) {
                 CombinedStressState.RUNNING -> getColor(R.color.safe)
-                CombinedStressState.STARTING,
-                CombinedStressState.STOPPING,
-                CombinedStressState.THERMAL_LIMITED,
-                -> getColor(R.color.warning)
                 CombinedStressState.ERROR -> getColor(R.color.danger)
                 CombinedStressState.IDLE -> getColor(R.color.text_secondary)
+                else -> getColor(R.color.warning)
             },
         )
-        if (state == CombinedStressState.RUNNING && preferences.keepScreenOnWhileRunning) {
-            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        elapsedValue.text = DurationFormatter.format(snapshot?.elapsedTimeMs ?: 0L)
+        val thermal = snapshot?.thermal?.status ?: PowerManager.THERMAL_STATUS_NONE
+        thermalValue.text = getString(R.string.dashboard_thermal, thermalStatusDisplay(thermal))
+        thermalValue.setTextColor(
+            when {
+                thermal >= PowerManager.THERMAL_STATUS_SEVERE -> getColor(R.color.danger)
+                thermal >= PowerManager.THERMAL_STATUS_MODERATE -> getColor(R.color.warning)
+                else -> getColor(R.color.safe)
+            },
+        )
+        if (state == CombinedStressState.RUNNING && snapshot != null) {
+            cpuCard.text = getString(R.string.resource_card_cpu, formatPercent(snapshot.cpuLoadPercent))
+            gpuCard.text = getString(
+                R.string.resource_card_gpu,
+                gpuModeLabel(active.gpuMode),
+                if (active.gpuMode == GpuMode.VISUAL) {
+                    getString(R.string.fps_value, snapshot.visualFps)
+                } else GpuMetricsFormatter.formatDispatchRate(snapshot.gpuDispatchRate),
+            )
+            memoryCard.text = getString(R.string.resource_card_ram, ByteFormatter.formatRate(snapshot.memoryActivityBytesPerSecond))
+            storageCard.text = getString(
+                R.string.resource_card_storage,
+                if (active.storageEnabled) ByteFormatter.formatRate(snapshot.storage.writeActivityBytesPerSecond) else getString(R.string.status_off),
+            )
         } else {
-            window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            cpuCard.text = getString(R.string.resource_card_cpu, if (active.cpuEnabled) getString(R.string.percent_value, active.cpuTargetPercent) else getString(R.string.status_off))
+            gpuCard.text = getString(R.string.resource_card_gpu, gpuModeLabel(active.gpuMode), if (active.gpuEnabled) getString(R.string.percent_value, active.gpuTargetPercent) else getString(R.string.status_off))
+            memoryCard.text = getString(R.string.resource_card_ram, if (active.memoryEnabled) memoryTargetLabel(active.memoryTarget) else getString(R.string.status_off))
+            storageCard.text = getString(R.string.resource_card_storage, if (active.storageEnabled) getString(R.string.storage_enabled_compact, active.storageMode.name, storageLevelLabel(active.storageLevel)) else getString(R.string.status_off))
         }
         val canConfigure = state == CombinedStressState.IDLE
-        setEnabledRecursively(configurationPanel, canConfigure)
-        configurationPanel.alpha = if (canConfigure) 1.0f else 0.55f
-        startButton.isEnabled = nativeAvailable && canConfigure
-        stopButton.isEnabled = state == CombinedStressState.STARTING ||
-            state == CombinedStressState.RUNNING ||
-            state == CombinedStressState.THERMAL_LIMITED ||
-            state == CombinedStressState.ERROR
+        presetGroup.isEnabled = canConfigure
+        for (index in 0 until presetGroup.childCount) presetGroup.getChildAt(index).isEnabled = canConfigure
+        durationSpinner.isEnabled = canConfigure
+        screenModeGroup.isEnabled = canConfigure
+        for (index in 0 until screenModeGroup.childCount) screenModeGroup.getChildAt(index).isEnabled = canConfigure
+        startButton.isEnabled = canConfigure
+        stopButton.isEnabled = !canConfigure
+        if (state == CombinedStressState.RUNNING && preferences.keepScreenOnWhileRunning &&
+            active.screenMode == ScreenMode.ON
+        ) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
     }
 
-    private fun setEnabledRecursively(view: View, enabled: Boolean) {
-        view.isEnabled = enabled
-        if (view is ViewGroup) {
-            for (index in 0 until view.childCount) {
-                setEnabledRecursively(view.getChildAt(index), enabled)
-            }
+    private fun isIdle(): Boolean = (service?.state ?: CombinedStressState.IDLE) == CombinedStressState.IDLE
+    private fun openMonitor() = startActivity(Intent(this, MonitorActivity::class.java))
+    private fun selectedDuration(): StressDuration = durations.getOrElse(durationSpinner.selectedItemPosition) { StressDuration.MINUTES_5 }
+    private fun selectedScreenMode(): ScreenMode = if (screenModeGroup.checkedRadioButtonId == R.id.screenModeOff) ScreenMode.OFF else ScreenMode.ON
+    private fun formatPercent(value: Double): String = String.format(java.util.Locale.US, "%.1f%%", value)
+    private fun memoryTargetLabel(target: MemoryTarget): String = getString(
+        when (target) {
+            MemoryTarget.MIB_256 -> R.string.ram_256
+            MemoryTarget.MIB_512 -> R.string.ram_512
+            MemoryTarget.GIB_1 -> R.string.ram_1gb
+            MemoryTarget.AUTO -> R.string.ram_auto
+        },
+    )
+    private fun storageLevelLabel(level: StorageLevel): String = getString(
+        when (level) {
+            StorageLevel.LOW -> R.string.storage_low
+            StorageLevel.MEDIUM -> R.string.storage_medium
+            StorageLevel.HIGH -> R.string.storage_high
+        },
+    )
+
+    private fun installInsets() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
+        findViewById<View>(R.id.dashboardRoot).setOnApplyWindowInsetsListener { view, insets ->
+            val bars = insets.getInsets(WindowInsets.Type.systemBars())
+            view.setPadding(12.dp + bars.left, bars.top, 12.dp + bars.right, bars.bottom)
+            insets
         }
     }
 
-    private fun renderRecentResult(session: StressSessionSnapshot?) {
-        resultSummaryValue.text = session?.let { SessionResultFormatter.detailed(this, it) }
-            ?: getString(R.string.no_results)
-        exportResultButton.isEnabled = session != null
+    private fun requestNotificationPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 500)
     }
 
-    private fun exportMostRecentResult() {
-        val session = lastSnapshot?.lastSession ?: historyStore.list().firstOrNull()
-        if (session == null) {
-            Toast.makeText(this, R.string.no_results, Toast.LENGTH_SHORT).show()
-            return
-        }
-        runCatching {
-            val file = resultExporter.exportSession(
-                session = session,
-                deviceInfo = deviceInfo,
-                storageCapacity = deviceMonitor.storageCapacity(),
-                gpuInfo = controller.gpuInfo,
-            )
-            resultExporter.share(file, "application/json", getString(R.string.share_result))
-        }.onFailure { onCombinedError(it.message ?: getString(R.string.export_result_failed)) }
-    }
+    private val Int.dp: Int
+        get() = (this * resources.displayMetrics.density).toInt()
+}
 
-    private fun startVisualStressIfSelected() {
-        val configuration = lastSnapshot?.currentSession?.configuration ?: configurationFromControls()
-        if (configuration.gpuEnabled && configuration.gpuMode != GpuMode.COMPUTE) {
-            gpuVisualStressView.start(configuration.gpuTargetPercent)
-        } else {
-            gpuVisualStressView.stop()
-            gpuVisualStressView.visibility = View.GONE
-        }
-    }
-
-    private fun stopVisualStress() {
-        if (!::gpuVisualStressView.isInitialized) return
-        val visual = gpuVisualStressView.snapshot()
-        if (::controller.isInitialized) {
-            controller.updateVisualMetrics(visual.framesPerSecond, visual.frameTimeNanos)
-        }
-        gpuVisualStressView.stop()
-        gpuVisualStressView.visibility = View.GONE
-    }
-
-    private fun formatMemoryTarget(target: MemoryTarget, availableBytes: Long): String {
-        val fixed = target.fixedBytes
-        if (fixed != null) return ByteFormatter.formatBytes(fixed)
-        if (availableBytes <= 0L) return getString(R.string.auto)
-        val estimated = min(availableBytes / 5L, MAX_AUTO_TARGET_BYTES).floorToMib()
-        return getString(R.string.auto_value, ByteFormatter.formatBytes(estimated))
-    }
-
-    private fun formatElapsed(elapsedMs: Long): String {
-        val totalSeconds = (elapsedMs / 1000L).coerceAtLeast(0L)
-        val hours = totalSeconds / 3600L
-        val minutes = totalSeconds % 3600L / 60L
-        val seconds = totalSeconds % 60L
-        return String.format(Locale.US, "%02d:%02d:%02d", hours, minutes, seconds)
-    }
-
-    private fun formatTemperature(value: Double?): String = value?.let {
-        String.format(Locale.US, "%.1f °C", it)
-    } ?: getString(R.string.not_available)
-
-    private fun formatPercent(value: Double, decimals: Int): String =
-        String.format(Locale.US, if (decimals == 0) "%.0f%%" else "%.1f%%", value)
-
-    private fun thermalColor(status: Int): Int = when {
-        status >= PowerManager.THERMAL_STATUS_SEVERE -> getColor(R.color.danger)
-        status >= PowerManager.THERMAL_STATUS_MODERATE -> getColor(R.color.warning)
-        else -> getColor(R.color.safe)
-    }
-
-    private fun resourceColor(state: String): Int = when (state) {
-        "RUNNING" -> getColor(R.color.safe)
-        "STARTING", "STOPPING", "THERMAL_LIMITED" -> getColor(R.color.warning)
-        "ERROR" -> getColor(R.color.danger)
-        else -> getColor(R.color.text_secondary)
-    }
-
-    private fun Long.floorToMib(): Long = this / MIB * MIB
-
-    companion object {
-        private const val MONITOR_INTERVAL_MS = 1_000L
-        private const val MIB = 1024L * 1024L
-        private const val MAX_AUTO_TARGET_BYTES = 1536L * MIB
-    }
+private class SimpleItemSelectedListener(
+    private val selected: () -> Unit,
+) : android.widget.AdapterView.OnItemSelectedListener {
+    override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: View?, position: Int, id: Long) = selected()
+    override fun onNothingSelected(parent: android.widget.AdapterView<*>?) = Unit
 }

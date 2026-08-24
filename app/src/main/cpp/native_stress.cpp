@@ -1,4 +1,5 @@
 #include <jni.h>
+#include <android/native_window_jni.h>
 
 #include <cstdint>
 #include <string>
@@ -7,12 +8,14 @@
 #include "gpu_stress.h"
 #include "memory_stress.h"
 #include "visual_gpu_stress.h"
+#include "onscreen_vulkan_renderer.h"
 
 namespace {
 CpuStress gCpuStress;
 MemoryStress gMemoryStress;
 GpuStress gGpuStress;
 VisualGpuStress gVisualGpuStress;
+OnscreenVulkanRenderer gOnscreenVulkanRenderer;
 
 jstring toJavaString(JNIEnv* environment, const std::string& value) {
     return environment->NewStringUTF(value.c_str());
@@ -182,6 +185,36 @@ jstring getVisualGpuLastError(JNIEnv* environment, jclass) {
     return toJavaString(environment, gVisualGpuStress.lastError());
 }
 
+jboolean startOnscreenVisual(
+        JNIEnv* environment, jclass, jobject surface, jint targetLoadPercent) {
+    ANativeWindow* window = ANativeWindow_fromSurface(environment, surface);
+    return gOnscreenVulkanRenderer.start(window, targetLoadPercent) ? JNI_TRUE : JNI_FALSE;
+}
+
+void stopOnscreenVisual(JNIEnv*, jclass) {
+    gOnscreenVulkanRenderer.stop();
+}
+
+jboolean isOnscreenVisualRunning(JNIEnv*, jclass) {
+    return gOnscreenVulkanRenderer.isRunning() ? JNI_TRUE : JNI_FALSE;
+}
+
+jdouble getOnscreenVisualFps(JNIEnv*, jclass) {
+    return static_cast<jdouble>(gOnscreenVulkanRenderer.framesPerSecond());
+}
+
+jlong getOnscreenVisualFrameTimeNanos(JNIEnv*, jclass) {
+    return static_cast<jlong>(gOnscreenVulkanRenderer.frameTimeNanos());
+}
+
+jlong getOnscreenVisualFrameCount(JNIEnv*, jclass) {
+    return static_cast<jlong>(gOnscreenVulkanRenderer.frameCount());
+}
+
+jstring getOnscreenVisualLastError(JNIEnv* environment, jclass) {
+    return toJavaString(environment, gOnscreenVulkanRenderer.lastError());
+}
+
 JNINativeMethod kMethods[] = {
     {const_cast<char*>("startCpuStress"), const_cast<char*>("(II)Z"),
      reinterpret_cast<void*>(startCpuStress)},
@@ -263,6 +296,20 @@ JNINativeMethod kMethods[] = {
      reinterpret_cast<void*>(getVisualGpuFrameWorkNanos)},
     {const_cast<char*>("getVisualGpuLastError"), const_cast<char*>("()Ljava/lang/String;"),
      reinterpret_cast<void*>(getVisualGpuLastError)},
+    {const_cast<char*>("startOnscreenVisual"), const_cast<char*>("(Landroid/view/Surface;I)Z"),
+     reinterpret_cast<void*>(startOnscreenVisual)},
+    {const_cast<char*>("stopOnscreenVisual"), const_cast<char*>("()V"),
+     reinterpret_cast<void*>(stopOnscreenVisual)},
+    {const_cast<char*>("isOnscreenVisualRunning"), const_cast<char*>("()Z"),
+     reinterpret_cast<void*>(isOnscreenVisualRunning)},
+    {const_cast<char*>("getOnscreenVisualFps"), const_cast<char*>("()D"),
+     reinterpret_cast<void*>(getOnscreenVisualFps)},
+    {const_cast<char*>("getOnscreenVisualFrameTimeNanos"), const_cast<char*>("()J"),
+     reinterpret_cast<void*>(getOnscreenVisualFrameTimeNanos)},
+    {const_cast<char*>("getOnscreenVisualFrameCount"), const_cast<char*>("()J"),
+     reinterpret_cast<void*>(getOnscreenVisualFrameCount)},
+    {const_cast<char*>("getOnscreenVisualLastError"), const_cast<char*>("()Ljava/lang/String;"),
+     reinterpret_cast<void*>(getOnscreenVisualLastError)},
 };
 }  // namespace
 
@@ -293,4 +340,5 @@ extern "C" JNIEXPORT void JNICALL JNI_OnUnload(JavaVM*, void*) {
     gMemoryStress.stop();
     gGpuStress.shutdown();
     gVisualGpuStress.stop();
+    gOnscreenVulkanRenderer.stop();
 }

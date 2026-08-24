@@ -23,6 +23,7 @@ struct VulkanCapabilities {
 class VulkanContext final {
 public:
     static constexpr VkDeviceSize kStorageBufferBytes = 64ULL * 1024ULL * 1024ULL;
+    static constexpr std::size_t kInFlightBatchCount = 3;
 
     VulkanContext() = default;
     ~VulkanContext();
@@ -63,7 +64,11 @@ private:
     bool createPipelineResources();
     bool createCommandResources();
     bool initializeStorageBuffer();
-    bool recordStressCommandBuffer();
+    bool recordStressCommandBuffers();
+    bool recordStressCommandBuffer(std::size_t slot);
+    bool calibrateWorkload();
+    bool submitSlot(std::size_t slot);
+    bool waitSlot(std::size_t slot, std::uint64_t* measuredNanos);
     std::uint64_t readOutputChecksum();
 
     VulkanCapabilities capabilities_;
@@ -90,8 +95,11 @@ private:
     VkPipelineLayout pipelineLayout_ = VK_NULL_HANDLE;
     VkPipeline pipeline_ = VK_NULL_HANDLE;
     VkCommandPool commandPool_ = VK_NULL_HANDLE;
-    VkCommandBuffer commandBuffer_ = VK_NULL_HANDLE;
-    VkFence fence_ = VK_NULL_HANDLE;
-    VkQueryPool queryPool_ = VK_NULL_HANDLE;
+    std::array<VkCommandBuffer, kInFlightBatchCount> commandBuffers_{};
+    std::array<VkFence, kInFlightBatchCount> fences_{};
+    std::array<VkQueryPool, kInFlightBatchCount> queryPools_{};
     std::uint32_t dispatchWorkGroupCount_ = 0;
+    std::uint32_t dispatchRepetitions_ = 1;
+    std::size_t nextCompletedSlot_ = 0;
+    bool inFlightPrimed_ = false;
 };

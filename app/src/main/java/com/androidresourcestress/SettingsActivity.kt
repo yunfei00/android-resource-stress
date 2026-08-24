@@ -7,6 +7,7 @@ import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import android.widget.Spinner
 import android.widget.Switch
+import android.widget.Toast
 
 class SettingsActivity : LocalizedActivity() {
     private lateinit var preferences: AppPreferences
@@ -73,6 +74,14 @@ class SettingsActivity : LocalizedActivity() {
                 .setPositiveButton(R.string.clear) { _, _ -> historyStore.clear() }
                 .setNegativeButton(R.string.cancel, null)
                 .show()
+        }, PageUi.matchWrap())
+        content.addView(PageUi.button(this, getString(R.string.export_diagnostics)) {
+            runCatching {
+                val file = DiagnosticLog(this).export()
+                ResultExporter(this).share(file, "text/plain", getString(R.string.share_diagnostics))
+            }.onFailure {
+                Toast.makeText(this, R.string.export_diagnostics_failed, Toast.LENGTH_LONG).show()
+            }
         }, PageUi.matchWrap())
         content.addView(PageUi.secondary(this, getString(
             R.string.app_info_format,

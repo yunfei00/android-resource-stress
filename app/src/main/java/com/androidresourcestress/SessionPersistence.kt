@@ -6,7 +6,7 @@ import org.json.JSONObject
 import java.io.File
 
 object SessionJsonCodec {
-    const val SCHEMA_VERSION = 2
+    const val SCHEMA_VERSION = 3
 
     fun toJson(session: StressSessionSnapshot): JSONObject = JSONObject().apply {
         put("schemaVersion", SCHEMA_VERSION)
@@ -62,6 +62,24 @@ object SessionJsonCodec {
         putNullable("peakEstimatedBatteryPowerWatts", session.peakEstimatedBatteryPowerWatts)
         put("peakVisualFps", session.peakVisualFps)
         put("averageVisualFrameTimeNanos", session.averageVisualFrameTimeNanos)
+        put("screenMode", session.screenMode.name)
+        putNullable("screenOffAtElapsedMs", session.screenOffAtElapsedMs)
+        putNullable("screenOnAtElapsedMs", session.screenOnAtElapsedMs)
+        put("screenOffDurationMs", session.screenOffDurationMs)
+        put("screenTransitionCount", session.screenTransitionCount)
+        put("screenFallbackUsed", session.screenFallbackUsed)
+        put("wakeAttempted", session.wakeAttempted)
+        put("wakeSucceeded", session.wakeSucceeded)
+        putNullable("wakeReason", session.wakeReason)
+        put("eventTimeline", JSONArray().apply {
+            session.eventTimeline.forEach { event ->
+                put(JSONObject().apply {
+                    put("elapsedTimeMs", event.elapsedTimeMs)
+                    put("type", event.type.name)
+                    putNullable("detail", event.detail)
+                })
+            }
+        })
         putNullable("stopReason", session.stopReason?.name)
         putNullable("lastError", session.lastError)
     }
@@ -103,7 +121,7 @@ object SessionJsonCodec {
                 "peakBatteryTemperatureCelsius",
             ),
             highestThermalStatus = json.optInt("highestThermalStatus", 0),
-            stopReason = json.optionalEnum("stopReason", StopReason::valueOf),
+            stopReason = json.optionalString("stopReason")?.let(::parseStopReason),
             lastError = json.optionalString("lastError"),
             thermalTimeline = json.optJSONArray("thermalTimeline").toThermalEvents(),
             cpuFrequencyObservations =
@@ -114,6 +132,16 @@ object SessionJsonCodec {
                 json.optionalDouble("peakEstimatedBatteryPowerWatts"),
             peakVisualFps = json.optDouble("peakVisualFps", 0.0),
             averageVisualFrameTimeNanos = json.optDouble("averageVisualFrameTimeNanos", 0.0),
+            screenMode = json.enumValue("screenMode", configuration.screenMode, ScreenMode::valueOf),
+            screenOffAtElapsedMs = json.optionalLong("screenOffAtElapsedMs"),
+            screenOnAtElapsedMs = json.optionalLong("screenOnAtElapsedMs"),
+            screenOffDurationMs = json.optLong("screenOffDurationMs", 0L),
+            screenTransitionCount = json.optInt("screenTransitionCount", 0),
+            screenFallbackUsed = json.optBoolean("screenFallbackUsed", false),
+            wakeAttempted = json.optBoolean("wakeAttempted", false),
+            wakeSucceeded = json.optBoolean("wakeSucceeded", false),
+            wakeReason = json.optionalString("wakeReason"),
+            eventTimeline = json.optJSONArray("eventTimeline").toSessionEvents(),
         )
     }
 
@@ -131,6 +159,7 @@ object SessionJsonCodec {
             put("storageLevel", configuration.storageLevel.name)
             put("gpuMode", configuration.gpuMode.name)
             put("duration", configuration.duration.name)
+            put("screenMode", configuration.screenMode.name)
         }
 
     fun configurationFromJson(json: JSONObject?): CombinedStressConfiguration {
@@ -170,6 +199,7 @@ object SessionJsonCodec {
                 StressDuration.MINUTES_5,
                 StressDuration::valueOf,
             ),
+            screenMode = json.enumValue("screenMode", ScreenMode.ON, ScreenMode::valueOf),
         )
     }
 
@@ -246,6 +276,30 @@ object SessionJsonCodec {
                 )
             }
         }
+
+    private fun JSONArray?.toSessionEvents(): List<SessionEvent> = buildList {
+        val array = this@toSessionEvents ?: return@buildList
+        for (index in 0 until array.length()) {
+            val item = array.optJSONObject(index) ?: continue
+            val type = runCatching {
+                SessionEventType.valueOf(item.optString("type"))
+            }.getOrNull() ?: continue
+            add(
+                SessionEvent(
+                    elapsedTimeMs = item.optLong("elapsedTimeMs", 0L),
+                    type = type,
+                    detail = item.optionalString("detail"),
+                ),
+            )
+        }
+    }
+
+    private fun parseStopReason(value: String): StopReason = when (value) {
+        "USER" -> StopReason.USER_STOP
+        "THERMAL" -> StopReason.THERMAL_CRITICAL
+        "ACTIVITY_STOPPED" -> StopReason.USER_STOP
+        else -> runCatching { StopReason.valueOf(value) }.getOrDefault(StopReason.RESOURCE_ERROR)
+    }
 
     private fun JSONObject.optionalLong(key: String): Long? =
         if (!has(key) || isNull(key)) null else optLong(key)

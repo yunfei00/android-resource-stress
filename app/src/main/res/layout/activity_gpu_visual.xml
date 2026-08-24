@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/visualRoot"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/black"
+    android:orientation="vertical">
+    <com.androidresourcestress.VulkanVisualSurfaceView
+        android:id="@+id/vulkanVisualSurface"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1" />
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="124dp"
+        android:background="@color/surface"
+        android:orientation="vertical"
+        android:padding="10dp">
+        <LinearLayout android:layout_width="match_parent" android:layout_height="32dp" android:orientation="horizontal">
+            <TextView android:id="@+id/visualStatus" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="@string/state_starting" android:textColor="@color/safe" android:textStyle="bold" />
+            <TextView android:id="@+id/visualElapsed" android:layout_width="wrap_content" android:layout_height="wrap_content" android:fontFamily="monospace" android:text="@string/zero_duration" android:textColor="@color/text_primary" android:textStyle="bold" />
+        </LinearLayout>
+        <TextView android:id="@+id/visualMetrics" android:layout_width="match_parent" android:layout_height="26dp" android:gravity="center_vertical" android:text="@string/visual_metrics_waiting" android:textColor="@color/text_secondary" android:textSize="13sp" />
+        <LinearLayout android:layout_width="match_parent" android:layout_height="48dp" android:orientation="horizontal">
+            <TextView android:id="@+id/visualThermal" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:gravity="center_vertical" android:text="@string/thermal_none_label" android:textColor="@color/safe" android:textStyle="bold" />
+            <Button android:id="@+id/visualStopButton" android:layout_width="132dp" android:layout_height="match_parent" android:background="@drawable/button_stop" android:text="@string/stop" android:textColor="@color/text_primary" android:textStyle="bold" />
+        </LinearLayout>
+    </LinearLayout>
+</LinearLayout>

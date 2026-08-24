@@ -114,6 +114,44 @@ object SessionResultFormatter {
         line(context.getString(R.string.label_battery_delta_result), temperatureDelta(session))
         line(context.getString(R.string.label_highest_thermal), context.thermalStatusDisplay(session.highestThermalStatus))
         line(context.getString(R.string.label_peak_estimated_power), context.powerDisplay(session.peakEstimatedBatteryPowerWatts))
+        append('\n').append(context.getString(R.string.screen_session_title)).append('\n')
+        line(
+            context.getString(R.string.label_screen_mode),
+            context.getString(
+                if (session.screenMode == ScreenMode.OFF) R.string.screen_test_off
+                else R.string.screen_test_on,
+            ),
+        )
+        line(
+            context.getString(R.string.label_screen_off_duration),
+            DurationFormatter.format(session.screenOffDurationMs),
+        )
+        line(context.getString(R.string.label_screen_transitions), session.screenTransitionCount.toString())
+        line(
+            context.getString(R.string.label_compute_fallback),
+            context.getString(if (session.screenFallbackUsed) R.string.boolean_yes else R.string.boolean_no),
+        )
+        line(
+            context.getString(R.string.label_wake_result),
+            when {
+                !session.wakeAttempted -> context.getString(R.string.not_attempted)
+                session.wakeSucceeded -> context.getString(R.string.succeeded)
+                else -> context.getString(R.string.failed)
+            },
+        )
+        if (session.eventTimeline.isNotEmpty()) {
+            append(context.getString(R.string.session_event_timeline_title)).append('\n')
+            session.eventTimeline.forEach { event ->
+                append(
+                    context.getString(
+                        R.string.session_event_timeline_item,
+                        DurationFormatter.format(event.elapsedTimeMs),
+                        event.type.name,
+                        event.detail.orEmpty(),
+                    ),
+                ).append('\n')
+            }
+        }
         append('\n').append(context.getString(R.string.thermal_timeline_title)).append('\n')
         session.thermalTimeline.forEach { event ->
             append(

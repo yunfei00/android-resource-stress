@@ -55,7 +55,7 @@ class Phase4CoreTest {
     }
 
     @Test
-    fun sessionJsonRoundTripsPhase4Fields() {
+    fun sessionJsonRoundTripsPhase4AndV050Fields() {
         val original = sampleSession()
         val restored = SessionJsonCodec.fromJson(SessionJsonCodec.toJson(original))
         assertEquals(original, restored)
@@ -64,6 +64,10 @@ class Phase4CoreTest {
         assertEquals(GpuMode.MIXED, restored.configuration.gpuMode)
         assertEquals(2, restored.thermalTimeline.size)
         assertEquals(1, restored.cpuFrequencyObservations.size)
+        assertEquals(ScreenMode.OFF, restored.screenMode)
+        assertEquals(2, restored.screenTransitionCount)
+        assertTrue(restored.screenFallbackUsed)
+        assertEquals(3, restored.eventTimeline.size)
     }
 
     @Test
@@ -78,6 +82,32 @@ class Phase4CoreTest {
         assertEquals(StorageMode.MIXED, restored.storageMode)
         assertEquals(StorageLevel.LOW, restored.storageLevel)
         assertEquals(GpuMode.COMPUTE, restored.gpuMode)
+        assertEquals(ScreenMode.ON, restored.screenMode)
+    }
+
+    @Test
+    fun phase4SessionJsonGetsSafeScreenAndStopReasonDefaults() {
+        val old = SessionJsonCodec.toJson(sampleSession()).apply {
+            remove("screenMode")
+            remove("screenOffAtElapsedMs")
+            remove("screenOnAtElapsedMs")
+            remove("screenOffDurationMs")
+            remove("screenTransitionCount")
+            remove("screenFallbackUsed")
+            remove("wakeAttempted")
+            remove("wakeSucceeded")
+            remove("wakeReason")
+            remove("eventTimeline")
+            put("stopReason", "USER")
+            getJSONObject("configuration").remove("screenMode")
+        }
+        val restored = SessionJsonCodec.fromJson(old)
+        assertEquals(ScreenMode.ON, restored.screenMode)
+        assertEquals(0L, restored.screenOffDurationMs)
+        assertFalse(restored.screenFallbackUsed)
+        assertFalse(restored.wakeAttempted)
+        assertTrue(restored.eventTimeline.isEmpty())
+        assertEquals(StopReason.USER_STOP, restored.stopReason)
     }
 
     @Test
@@ -131,6 +161,7 @@ class Phase4CoreTest {
                 storageEnabled = true,
                 storageMode = StorageMode.MIXED,
                 gpuMode = GpuMode.MIXED,
+                screenMode = ScreenMode.OFF,
             ),
         resolvedMemoryTargetBytes = 512L,
         allocatedMemoryBytes = 500L,
@@ -149,7 +180,7 @@ class Phase4CoreTest {
         startBatteryTemperatureCelsius = 41.0,
         peakBatteryTemperatureCelsius = 46.0,
         highestThermalStatus = 3,
-        stopReason = StopReason.USER,
+        stopReason = StopReason.USER_STOP,
         lastError = null,
         thermalTimeline = listOf(
             ThermalEvent(0L, PowerManager.THERMAL_STATUS_NONE, 41.0),
@@ -163,5 +194,19 @@ class Phase4CoreTest {
         peakEstimatedBatteryPowerWatts = 4.92,
         peakVisualFps = 59.5,
         averageVisualFrameTimeNanos = 16_800_000.0,
+        screenMode = ScreenMode.OFF,
+        screenOffAtElapsedMs = 3_000L,
+        screenOnAtElapsedMs = 28_000L,
+        screenOffDurationMs = 25_000L,
+        screenTransitionCount = 2,
+        screenFallbackUsed = true,
+        wakeAttempted = true,
+        wakeSucceeded = true,
+        wakeReason = "DURATION_COMPLETED",
+        eventTimeline = listOf(
+            SessionEvent(0L, SessionEventType.SESSION_START),
+            SessionEvent(3_000L, SessionEventType.SCREEN_OFF),
+            SessionEvent(3_050L, SessionEventType.COMPUTE_FALLBACK_STARTED),
+        ),
     )
 }
