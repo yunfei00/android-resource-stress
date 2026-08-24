@@ -23,7 +23,7 @@ object PageUi {
             setPadding(0, 0, 0, dp(activity, 12))
         })
         root.addView(Button(activity).apply {
-            text = "BACK"
+            text = activity.getString(R.string.back)
             setOnClickListener { activity.finish() }
         }, matchWrap())
         activity.setContentView(ScrollView(activity).apply {

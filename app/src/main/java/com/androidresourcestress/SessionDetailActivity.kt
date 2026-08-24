@@ -1,19 +1,19 @@
 package com.androidresourcestress
 
-import android.app.Activity
 import android.os.Bundle
 import android.widget.Toast
 
-class SessionDetailActivity : Activity() {
+class SessionDetailActivity : LocalizedActivity() {
     private var session: StressSessionSnapshot? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val content = PageUi.content(this, "SESSION DETAIL")
+        val content = PageUi.content(this, getString(R.string.session_detail_title))
         val startTime = intent.getLongExtra(EXTRA_START_TIME, -1L)
         session = SessionHistoryStore(this).find(startTime)
-        content.addView(PageUi.body(this, session?.let(SessionResultFormatter::detailed) ?: "Session not found."))
-        content.addView(PageUi.button(this, "EXPORT & SHARE JSON") { export() }, PageUi.matchWrap())
+        content.addView(PageUi.body(this, session?.let { SessionResultFormatter.detailed(this, it) }
+            ?: getString(R.string.session_not_found)))
+        content.addView(PageUi.button(this, getString(R.string.export_share_json)) { export() }, PageUi.matchWrap())
     }
 
     private fun export() {
@@ -29,7 +29,7 @@ class SessionDetailActivity : Activity() {
             )
             exporter.share(output, "application/json", getString(R.string.share_result))
         }.onFailure {
-            Toast.makeText(this, it.message ?: "Export failed", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, it.message ?: getString(R.string.export_failed), Toast.LENGTH_LONG).show()
         }
     }
 

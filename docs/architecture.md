@@ -3,26 +3,40 @@
 ## Components
 
 ```text
-Native View UI
+Localized Native View UI
 Main / History / Detail / Device / Settings
-                    │
-                    ▼
-        CombinedStressController
-        configuration + state machine
-        thermal + timer + session metrics
-          │       │       │       │
-          ▼       ▼       ▼       ▼
-        CPU      GPU    Memory   Storage
-        JNI      JNI      JNI    FileChannel
-          └───────┴───────┘       app cache
-                  │
-          C++17 / Vulkan Compute
+                         │
+                         ▼
+             CombinedStressController
+       configuration + serialized state machine
+       timer + thermal policy + session metrics
+          │          │          │          │
+          ▼          ▼          ▼          ▼
+        CPU         GPU       Memory     Storage
+        JNI    Compute/Visual    JNI     FileChannel
+          │          │          │       app cache
+          └──────────┴──────────┘
+                 C++17 / Vulkan
 
-Session → JSON history → Result export / ACTION_SEND
+Monitoring
+HardwareMonitorService (background cached snapshot)
+          │
+          ▼
+GenericAndroidMonitor
+   ├── RootHardwareMonitor
+   ├── QualcommMonitor
+   └── MediaTekMonitor
+          │
+          ├── CPU cpufreq policies
+          ├── thermal_zone scanner
+          ├── KGSL/devfreq capability discovery
+          └── BatteryManager / power_supply fallback framework
+
+Session → versioned JSON history → Result export / ACTION_SEND
 Events  → private diagnostic log → ACTION_SEND
 ```
 
-The existing CPU, Vulkan GPU and Memory native cores remain isolated behind `NativeStress`. Phase 4 adds Storage as another resource owned by the same controller rather than a second global state system.
+The stable CPU, Vulkan Compute and Memory cores remain isolated behind `NativeStress`. Storage and Vulkan Visual are resources owned by the same controller, not independent global state systems.
 
 ## State Machine
 
@@ -33,30 +47,45 @@ IDLE → STARTING → RUNNING → STOPPING → IDLE
                      └→ THERMAL_LIMITED → STOPPING
 ```
 
-START is accepted only in `IDLE`. A generation token cancels stale queued starts/stops, and the controller uses one serialized executor. UI configuration is disabled outside `IDLE`. Repeated START or STOP cannot create duplicate workers or duplicate cleanup.
+START is accepted only in IDLE. A generation token cancels stale queued operations and one executor serializes native lifecycle changes. UI configuration is disabled while active, so repeated clicks cannot create duplicate workers.
 
 ## Resource Lifecycle
 
-Start validates selected resources and current Thermal state, then resolves safe Memory/Storage sizes. Resources start in order Memory → Storage (if selected) → GPU → CPU, with a running-state check after each step. Partial failure uses the same cleanup path.
+Start validates configuration and rejects only an already-CRITICAL-or-higher thermal state. It resolves safe Memory/Storage sizes, then starts Memory → Storage → GPU Compute/Visual → CPU. Visual-only creates a bounded Vulkan graphics worker; Mixed runs it alongside the existing Compute worker. Each resource must report RUNNING before start continues.
 
-Cleanup stops and joins CPU, GPU, Memory and Storage workers. Storage closes its scoped `RandomAccessFile`/`FileChannel`, removes `cacheDir/storage_stress`, and resets counters. `StorageStress` also cleans orphan files in its constructor and before each start.
-
-`Activity.onStop()`, user STOP, duration completion, resource errors and Thermal protection all call `stopAll()`. No stress resource is intentionally allowed to continue in the background.
+Cleanup stops and joins CPU, Vulkan Compute, Vulkan Visual, Memory and Storage. Storage closes its scoped file/channel and removes `cacheDir/storage_stress`. The foreground `GpuVisualStressView` removes Choreographer callbacks on STOP/detach. Partial start failures, Activity `onStop()`, user STOP, duration completion, resource errors and Thermal protection all use the same cleanup path.
 
 ## Thermal Protection
 
-The controller samples `PowerManager.currentThermalStatus` and battery broadcast temperature with the other metrics. `MODERATE` is logged and shown as a warning. `SEVERE` or higher changes the state to `THERMAL_LIMITED` and invokes the unified stop path. There is no setting or code path to disable this protection.
+```text
+NONE / LIGHT    continue
+MODERATE        continue + warning + event
+SEVERE          continue + red warning + event
+CRITICAL+       THERMAL_LIMITED → STOP ALL
+```
+
+`ThermalEvent` is appended only when Android's raw status changes and contains elapsed time, raw status and battery temperature. Session analysis derives Time to MODERATE/SEVERE. The policy is a pure tested function and has no disable switch.
+
+## Hardware Monitoring
+
+`HardwareMonitorService` owns a scheduled background thread and publishes an immutable cached `HardwareSnapshot` about once per second. Dashboard reads are therefore non-blocking.
+
+`GenericAndroidMonitor` discovers rather than assumes nodes. It scans cpufreq policies, readable thermal zones and GPU-related devfreq/KGSL paths, validates units/ranges, and reads BatteryManager observations. Missing/denied nodes become Unsupported. Root detection runs once with a timeout; vendor backends currently provide safe discovery extension points for future real engineering-device profiles.
 
 ## Session Data
 
-Each start creates one in-memory mutable session. Periodic samples update CPU/Core Equivalent, App/Native PSS, Memory Activity, GPU dispatch/work time, Storage totals/rates, battery temperature and highest Thermal status. Finish freezes a `StressSessionSnapshot`, saves it as versioned JSON, trims history, updates Recent Result and enables export.
+Each run creates one mutable session. Periodic samples update CPU/Core Equivalent, App/Native PSS, Memory Activity, Compute Dispatch/Work Time, Visual FPS/Frame Time, Storage totals/rates, battery temperature, Thermal Timeline, CPU frequency start/min/peak/end and start/end/peak battery-power observations.
 
-The reader uses tolerant defaults for fields introduced after Phase 3. Preferences store only configuration and product settings; runtime state is never persisted, so process restart always begins at `IDLE`.
+Finish freezes `StressSessionSnapshot`, saves schema-versioned JSON and trims newest-first history to 20/30/50. The reader supplies safe defaults for earlier Phase 4 schema. Preferences persist configuration/language only; runtime state is never persisted, so restart is always IDLE.
+
+## Localization
+
+Default English resources live in `values/strings.xml`; Simplified Chinese lives in `values-zh-rCN/strings.xml`. `LocalizedActivity` applies the persisted app locale before resource inflation. API 33+ also uses framework `LocaleManager`; Follow System uses an empty app locale list.
 
 ## Export and Permissions
 
-Result JSON and the app-owned diagnostic log are written below `cacheDir/exports`. A non-exported, read-only provider exposes only canonical files inside that directory using temporary URI permission granted by `ACTION_SEND`. The manifest requests no network or storage permissions.
+Result JSON includes app/device/session/cpu/gpu/memory/storage/thermal/power and CPU-frequency data. Export and diagnostic files stay under `cacheDir/exports`. A non-exported, read-only provider validates canonical paths and grants temporary ACTION_SEND URI access. The manifest requests no network, root or storage permissions.
 
 ## Release Workflow
 
-The single `release-apk.yml` workflow runs on `v*` tags, installs pinned Android build components, creates a clean debug APK, generates `SHA256SUMS.txt`, and publishes both assets to the matching GitHub Release. Optional production signing is provided by four environment variables; no signing material is committed and missing signing secrets do not break Phase releases.
+The single `release-apk.yml` workflow runs on `v*`, installs pinned Android build components, creates a clean debug APK, generates `SHA256SUMS.txt`, and uploads both to the matching Release. Optional production signing uses environment variables only; no signing material is committed.

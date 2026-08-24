@@ -11,6 +11,11 @@
     </LinearLayout>
 
     <LinearLayout style="@style/MetricRow">
+        <TextView style="@style/MetricLabel" android:text="@string/label_gpu_mode" />
+        <TextView android:id="@+id/gpuModeValue" style="@style/GpuMetricValue" android:text="@string/gpu_mode_compute" />
+    </LinearLayout>
+
+    <LinearLayout style="@style/MetricRow">
         <TextView style="@style/MetricLabel" android:text="@string/label_vulkan_version" />
         <TextView android:id="@+id/gpuVulkanValue" style="@style/GpuMetricValue" android:text="@string/checking" />
     </LinearLayout>
@@ -57,4 +62,31 @@
         <TextView style="@style/MetricLabel" android:text="@string/label_output_checksum" />
         <TextView android:id="@+id/gpuOutputValue" style="@style/GpuMetricValue" android:text="@string/waiting" />
     </LinearLayout>
+
+    <LinearLayout style="@style/MetricRow">
+        <TextView style="@style/MetricLabel" android:text="@string/label_visual_fps" />
+        <TextView android:id="@+id/gpuVisualFpsValue" style="@style/GpuMetricValue" android:text="@string/not_available" />
+    </LinearLayout>
+
+    <LinearLayout style="@style/MetricRow">
+        <TextView style="@style/MetricLabel" android:text="@string/label_visual_frame_time" />
+        <TextView android:id="@+id/gpuVisualFrameTimeValue" style="@style/GpuMetricValue" android:text="@string/not_available" />
+    </LinearLayout>
+
+    <LinearLayout style="@style/MetricRow">
+        <TextView style="@style/MetricLabel" android:text="@string/label_gpu_hardware_frequency" />
+        <TextView android:id="@+id/gpuHardwareFrequencyValue" style="@style/GpuMetricValue" android:text="@string/unsupported" />
+    </LinearLayout>
+
+    <LinearLayout style="@style/MetricRow">
+        <TextView style="@style/MetricLabel" android:text="@string/label_gpu_hardware_utilization" />
+        <TextView android:id="@+id/gpuHardwareUtilizationValue" style="@style/GpuMetricValue" android:text="@string/unsupported" />
+    </LinearLayout>
+
+    <com.androidresourcestress.GpuVisualStressView
+        android:id="@+id/gpuVisualStressView"
+        android:layout_width="match_parent"
+        android:layout_height="220dp"
+        android:layout_marginTop="10dp"
+        android:visibility="gone" />
 </LinearLayout>

@@ -107,5 +107,23 @@ object NativeStress {
     @JvmStatic
     external fun getGpuLastError(): String
 
+    @JvmStatic
+    external fun startVisualGpuStress(targetLoadPercent: Int): Boolean
+
+    @JvmStatic
+    external fun stopVisualGpuStress()
+
+    @JvmStatic
+    external fun getVisualGpuStressStatus(): Int
+
+    @JvmStatic
+    external fun getVisualGpuFrameCount(): Long
+
+    @JvmStatic
+    external fun getVisualGpuFrameWorkNanos(): Long
+
+    @JvmStatic
+    external fun getVisualGpuLastError(): String
+
     fun ensureLoaded() = Unit
 }

@@ -47,6 +47,16 @@ class CombinedStressController(
         val startBatteryTemperatureCelsius: Double?,
         var peakBatteryTemperatureCelsius: Double?,
         var highestThermalStatus: Int,
+        val thermalTimeline: MutableList<ThermalEvent>,
+        var lastThermalStatus: Int,
+        val cpuFrequencyObservations:
+            MutableMap<String, MutableCpuFrequencyObservation> = linkedMapOf(),
+        var startPowerObservation: PowerObservation? = null,
+        var endPowerObservation: PowerObservation? = null,
+        var peakEstimatedBatteryPowerWatts: Double? = null,
+        var peakVisualFps: Double = 0.0,
+        var visualFrameTimeTotalNanos: Double = 0.0,
+        var visualFrameTimeSampleCount: Long = 0L,
         var stopReason: StopReason? = null,
         var lastError: String? = null,
     ) {
@@ -80,6 +90,40 @@ class CombinedStressController(
             highestThermalStatus = highestThermalStatus,
             stopReason = stopReason,
             lastError = lastError,
+            thermalTimeline = thermalTimeline.toList(),
+            cpuFrequencyObservations = cpuFrequencyObservations.values.map { it.snapshot() },
+            startPowerObservation = startPowerObservation,
+            endPowerObservation = endPowerObservation,
+            peakEstimatedBatteryPowerWatts = peakEstimatedBatteryPowerWatts,
+            peakVisualFps = peakVisualFps,
+            averageVisualFrameTimeNanos = if (visualFrameTimeSampleCount > 0L) {
+                visualFrameTimeTotalNanos / visualFrameTimeSampleCount
+            } else {
+                0.0
+            },
+        )
+    }
+
+    private data class MutableCpuFrequencyObservation(
+        val policy: String,
+        val startHz: Long?,
+        var minimumObservedHz: Long?,
+        var peakObservedHz: Long?,
+        var endHz: Long?,
+    ) {
+        fun record(currentHz: Long?) {
+            if (currentHz == null || currentHz <= 0L) return
+            minimumObservedHz = minimumObservedHz?.let { min(it, currentHz) } ?: currentHz
+            peakObservedHz = peakObservedHz?.let { max(it, currentHz) } ?: currentHz
+            endHz = currentHz
+        }
+
+        fun snapshot(): CpuFrequencySessionObservation = CpuFrequencySessionObservation(
+            policy = policy,
+            startHz = startHz,
+            minimumObservedHz = minimumObservedHz,
+            peakObservedHz = peakObservedHz,
+            endHz = endHz,
         )
     }
 
@@ -93,6 +137,7 @@ class CombinedStressController(
     private val mainHandler = Handler(Looper.getMainLooper())
     private val memoryMonitor = MemoryMonitor(context.applicationContext)
     private val deviceMonitor = DeviceMonitor(context.applicationContext)
+    private val hardwareMonitor = HardwareMonitorService(context.applicationContext)
     private val cpuMonitor = CpuMonitor(logicalCoreCount)
     private val memoryActivityMonitor = MemoryActivityMonitor()
     private val gpuActivityMonitor = GpuActivityMonitor()
@@ -108,7 +153,13 @@ class CombinedStressController(
     private var currentSession: MutableSession? = null
     private var lastSession: StressSessionSnapshot? = null
     private var pendingStopReason = StopReason.USER
-    private var moderateLoggedForSession = false
+    private var lastLoggedThermalStatus: Int? = null
+
+    @Volatile
+    private var visualFps = 0.0
+
+    @Volatile
+    private var visualFrameTimeNanos = 0.0
 
     @Volatile
     var state: CombinedStressState = CombinedStressState.IDLE
@@ -143,7 +194,9 @@ class CombinedStressController(
             state = CombinedStressState.STARTING
             lastError = null
             pendingStopReason = StopReason.USER
-            moderateLoggedForSession = false
+            lastLoggedThermalStatus = null
+            visualFps = 0.0
+            visualFrameTimeNanos = 0.0
             generation
         }
         postState(CombinedStressState.STARTING)
@@ -191,10 +244,14 @@ class CombinedStressController(
             memoryActivityMonitor.sample(processed)
         }
         val gpu = nativeGpuSnapshot()
+        val visualGpuStatus = nativeVisualGpuStatus()
+        val visualGpuFrameCount = nativeVisualGpuFrameCount()
+        val visualGpuFrameWorkNanos = nativeVisualGpuFrameWorkNanos()
         val gpuActivity = synchronized(metricsLock) { gpuActivityMonitor.sample(gpu) }
         val storage = storageStress.snapshot()
         val thermal = runCatching { deviceMonitor.thermalSnapshot() }
             .getOrElse { ThermalSnapshot(null, PowerManager.THERMAL_STATUS_NONE) }
+        val hardware = hardwareMonitor.snapshot()
         val now = SystemClock.elapsedRealtime()
 
         var activeSession: StressSessionSnapshot?
@@ -244,12 +301,12 @@ class CombinedStressController(
                         temperature,
                     )
                 }
-
-                if (!moderateLoggedForSession &&
-                    thermal.status >= PowerManager.THERMAL_STATUS_MODERATE
-                ) {
-                    moderateLoggedForSession = true
-                    logWarning("Thermal ${thermal.statusLabel}: Device is warming up")
+                recordThermalEventIfChanged(session, thermal, now)
+                recordHardwareObservation(session, hardware, now)
+                session.peakVisualFps = max(session.peakVisualFps, visualFps)
+                if (visualFrameTimeNanos > 0.0) {
+                    session.visualFrameTimeTotalNanos += visualFrameTimeNanos
+                    session.visualFrameTimeSampleCount += 1L
                 }
 
                 if (state == CombinedStressState.RUNNING) {
@@ -258,9 +315,10 @@ class CombinedStressController(
                         cpuThreads,
                         allocated,
                         gpu,
+                        visualGpuStatus,
                         storage,
                     )
-                    thermalStop = thermal.isSevereOrHigher
+                    thermalStop = thermal.requiresImmediateStop
                     durationStop = session.configuration.duration.durationMs > 0L &&
                         now - session.startElapsedTimeMs >=
                         session.configuration.duration.durationMs
@@ -302,7 +360,17 @@ class CombinedStressController(
             storage = storage,
             thermal = thermal,
             lastError = lastError,
+            hardware = hardware,
+            visualFps = visualFps,
+            visualFrameTimeNanos = visualFrameTimeNanos,
+            visualVulkanFrameCount = visualGpuFrameCount,
+            visualVulkanFrameWorkNanos = visualGpuFrameWorkNanos,
         )
+    }
+
+    fun updateVisualMetrics(fps: Double, frameTimeNanos: Double) {
+        visualFps = fps.takeIf { it.isFinite() && it >= 0.0 } ?: 0.0
+        visualFrameTimeNanos = frameTimeNanos.takeIf { it.isFinite() && it >= 0.0 } ?: 0.0
     }
 
     private fun performStart(
@@ -312,7 +380,7 @@ class CombinedStressController(
         try {
             validateConfiguration(configuration)
             val thermal = deviceMonitor.thermalSnapshot()
-            if (thermal.isSevereOrHigher) {
+            if (thermal.requiresImmediateStop) {
                 throw IllegalStateException(
                     "Thermal status is ${thermal.statusLabel}; stress start refused",
                 )
@@ -325,17 +393,37 @@ class CombinedStressController(
                 0L
             }
             val startWallTimeMs = System.currentTimeMillis()
+            val startHardware = hardwareMonitor.snapshot()
+            val startElapsedTimeMs = SystemClock.elapsedRealtime()
             val session = MutableSession(
                 sessionId = startWallTimeMs,
                 startWallTimeMs = startWallTimeMs,
-                startElapsedTimeMs = SystemClock.elapsedRealtime(),
+                startElapsedTimeMs = startElapsedTimeMs,
                 configuration = configuration,
                 resolvedMemoryTargetBytes = resolvedMemoryTarget,
                 allocatedMemoryBytes = 0L,
                 startBatteryTemperatureCelsius = thermal.batteryTemperatureCelsius,
                 peakBatteryTemperatureCelsius = thermal.batteryTemperatureCelsius,
                 highestThermalStatus = thermal.status,
+                thermalTimeline = mutableListOf(
+                    ThermalEvent(0L, thermal.status, thermal.batteryTemperatureCelsius),
+                ),
+                lastThermalStatus = thermal.status,
+                startPowerObservation = powerObservation(startHardware.battery, 0L),
+                endPowerObservation = powerObservation(startHardware.battery, 0L),
+                peakEstimatedBatteryPowerWatts =
+                    startHardware.battery.estimatedBatteryPowerWatts,
             )
+            startHardware.cpuFrequencies.forEach { policy ->
+                session.cpuFrequencyObservations[policy.policy] =
+                    MutableCpuFrequencyObservation(
+                        policy = policy.policy,
+                        startHz = policy.currentHz,
+                        minimumObservedHz = policy.currentHz,
+                        peakObservedHz = policy.currentHz,
+                        endHz = policy.currentHz,
+                    )
+            }
             synchronized(lock) {
                 ensureStartActive(operationGeneration)
                 currentSession = session
@@ -386,7 +474,7 @@ class CombinedStressController(
                 ensureStartActive(operationGeneration)
             }
 
-            if (configuration.gpuEnabled) {
+            if (configuration.gpuEnabled && configuration.gpuMode != GpuMode.VISUAL) {
                 val info = gpuInfo ?: initializeGpuAndReadInfo().also { detected ->
                     gpuInfo = detected
                     postToMain { listener?.onGpuInfoAvailable(detected) }
@@ -402,7 +490,26 @@ class CombinedStressController(
                 ) {
                     throw IllegalStateException(nativeGpuError("GPU worker did not enter RUNNING"))
                 }
-                logInfo("GPU started: target=${configuration.gpuTargetPercent}%")
+                logInfo(
+                    "GPU compute started: mode=${configuration.gpuMode} " +
+                        "target=${configuration.gpuTargetPercent}%",
+                )
+                ensureStartActive(operationGeneration)
+            }
+            if (configuration.gpuEnabled && configuration.gpuMode != GpuMode.COMPUTE) {
+                if (!NativeStress.startVisualGpuStress(configuration.gpuTargetPercent)) {
+                    throw IllegalStateException(
+                        runCatching { NativeStress.getVisualGpuLastError() }
+                            .getOrDefault("Vulkan visual stress could not be started"),
+                    )
+                }
+                if (nativeVisualGpuStatus() != GpuNativeStatus.RUNNING) {
+                    throw IllegalStateException("Vulkan visual worker did not enter RUNNING")
+                }
+                logInfo(
+                    "GPU Vulkan visual started: mode=${configuration.gpuMode} " +
+                        "target=${configuration.gpuTargetPercent}%",
+                )
                 ensureStartActive(operationGeneration)
             }
 
@@ -552,6 +659,7 @@ class CombinedStressController(
         cpuThreads: Int,
         allocatedMemoryBytes: Long,
         gpu: GpuSnapshot,
+        visualGpuStatus: GpuNativeStatus,
         storage: StorageRuntimeSnapshot,
     ): String? = when {
         configuration.cpuEnabled && cpuThreads <= 0 -> "CPU stress worker stopped unexpectedly"
@@ -559,10 +667,19 @@ class CombinedStressController(
             "Memory stress allocation disappeared unexpectedly"
         configuration.memoryEnabled && !nativeMemoryRunning() ->
             "Memory stress worker stopped unexpectedly"
-        configuration.gpuEnabled && gpu.status == GpuNativeStatus.ERROR ->
+        configuration.gpuEnabled && configuration.gpuMode != GpuMode.VISUAL &&
+            gpu.status == GpuNativeStatus.ERROR ->
             nativeGpuError("GPU worker stopped after a Vulkan error")
-        configuration.gpuEnabled && gpu.status != GpuNativeStatus.RUNNING ->
+        configuration.gpuEnabled && configuration.gpuMode != GpuMode.VISUAL &&
+            gpu.status != GpuNativeStatus.RUNNING ->
             "GPU stress worker stopped unexpectedly"
+        configuration.gpuEnabled && configuration.gpuMode != GpuMode.COMPUTE &&
+            visualGpuStatus == GpuNativeStatus.ERROR ->
+            runCatching { NativeStress.getVisualGpuLastError() }
+                .getOrDefault("Vulkan visual worker stopped after an error")
+        configuration.gpuEnabled && configuration.gpuMode != GpuMode.COMPUTE &&
+            visualGpuStatus != GpuNativeStatus.RUNNING ->
+            "Vulkan visual worker stopped unexpectedly"
         configuration.storageEnabled && storage.status == StorageStressStatus.ERROR ->
             storage.lastError ?: "Storage stress worker stopped after an I/O error"
         configuration.storageEnabled && !storageStress.isRunning() ->
@@ -573,6 +690,7 @@ class CombinedStressController(
     private fun cleanupNativeResources() {
         runCatching { NativeStress.stopCpuStress() }
         runCatching { NativeStress.stopGpuStress() }
+        runCatching { NativeStress.stopVisualGpuStress() }
         runCatching { NativeStress.stopMemoryStress() }
         val finalStorage = runCatching { storageStress.stop() }.getOrNull()
         if (finalStorage != null) {
@@ -679,6 +797,78 @@ class CombinedStressController(
         NativeStress.getGpuLastError().ifBlank { fallback }
     }.getOrDefault(fallback)
 
+    private fun nativeVisualGpuStatus(): GpuNativeStatus = runCatching {
+        GpuNativeStatus.fromCode(NativeStress.getVisualGpuStressStatus())
+    }.getOrDefault(GpuNativeStatus.ERROR)
+
+    private fun nativeVisualGpuFrameCount(): Long = runCatching {
+        NativeStress.getVisualGpuFrameCount().coerceAtLeast(0L)
+    }.getOrDefault(0L)
+
+    private fun nativeVisualGpuFrameWorkNanos(): Long = runCatching {
+        NativeStress.getVisualGpuFrameWorkNanos().coerceAtLeast(0L)
+    }.getOrDefault(0L)
+
+    private fun recordThermalEventIfChanged(
+        session: MutableSession,
+        thermal: ThermalSnapshot,
+        nowElapsedTimeMs: Long,
+    ) {
+        if (session.lastThermalStatus == thermal.status) return
+        session.lastThermalStatus = thermal.status
+        val elapsed = (nowElapsedTimeMs - session.startElapsedTimeMs).coerceAtLeast(0L)
+        session.thermalTimeline += ThermalEvent(
+            elapsedTimeMs = elapsed,
+            status = thermal.status,
+            batteryTemperatureCelsius = thermal.batteryTemperatureCelsius,
+        )
+        if (lastLoggedThermalStatus != thermal.status) {
+            lastLoggedThermalStatus = thermal.status
+            val message = "Thermal changed elapsed=${elapsed}ms status=${thermal.statusLabel} " +
+                "battery=${thermal.batteryTemperatureCelsius}"
+            if (ThermalPolicy.isWarning(thermal.status)) logWarning(message) else logInfo(message)
+        }
+    }
+
+    private fun recordHardwareObservation(
+        session: MutableSession,
+        hardware: HardwareSnapshot,
+        nowElapsedTimeMs: Long,
+    ) {
+        val elapsed = (nowElapsedTimeMs - session.startElapsedTimeMs).coerceAtLeast(0L)
+        hardware.cpuFrequencies.forEach { policy ->
+            val observation = session.cpuFrequencyObservations.getOrPut(policy.policy) {
+                MutableCpuFrequencyObservation(
+                    policy = policy.policy,
+                    startHz = policy.currentHz,
+                    minimumObservedHz = policy.currentHz,
+                    peakObservedHz = policy.currentHz,
+                    endHz = policy.currentHz,
+                )
+            }
+            observation.record(policy.currentHz)
+        }
+        session.endPowerObservation = powerObservation(hardware.battery, elapsed)
+        hardware.battery.estimatedBatteryPowerWatts?.let { power ->
+            session.peakEstimatedBatteryPowerWatts = max(
+                session.peakEstimatedBatteryPowerWatts ?: power,
+                power,
+            )
+        }
+    }
+
+    private fun powerObservation(
+        battery: BatteryPowerSnapshot,
+        elapsedTimeMs: Long,
+    ): PowerObservation = PowerObservation(
+        elapsedTimeMs = elapsedTimeMs,
+        batteryLevelPercent = battery.levelPercent,
+        chargingState = battery.chargingState,
+        voltageVolts = battery.voltageVolts,
+        currentAmpsRaw = battery.currentAmpsRaw,
+        estimatedBatteryPowerWatts = battery.estimatedBatteryPowerWatts,
+    )
+
     private fun postState(newState: CombinedStressState) {
         logInfo("State -> $newState")
         postToMain { listener?.onCombinedStateChanged(newState) }
@@ -726,6 +916,7 @@ class CombinedStressController(
         }
         executor.shutdown()
         shutdownComplete.await(5L, TimeUnit.SECONDS)
+        hardwareMonitor.close()
         mainHandler.removeCallbacksAndMessages(null)
     }
 

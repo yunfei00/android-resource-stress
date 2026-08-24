@@ -6,7 +6,7 @@ import org.json.JSONObject
 import java.io.File
 
 object SessionJsonCodec {
-    const val SCHEMA_VERSION = 1
+    const val SCHEMA_VERSION = 2
 
     fun toJson(session: StressSessionSnapshot): JSONObject = JSONObject().apply {
         put("schemaVersion", SCHEMA_VERSION)
@@ -37,6 +37,31 @@ object SessionJsonCodec {
         putNullable("startBatteryTemperatureCelsius", session.startBatteryTemperatureCelsius)
         putNullable("peakBatteryTemperatureCelsius", session.peakBatteryTemperatureCelsius)
         put("highestThermalStatus", session.highestThermalStatus)
+        put("thermalTimeline", JSONArray().apply {
+            session.thermalTimeline.forEach { event ->
+                put(JSONObject().apply {
+                    put("elapsedTimeMs", event.elapsedTimeMs)
+                    put("status", event.status)
+                    putNullable("batteryTemperatureCelsius", event.batteryTemperatureCelsius)
+                })
+            }
+        })
+        put("cpuFrequencyObservations", JSONArray().apply {
+            session.cpuFrequencyObservations.forEach { observation ->
+                put(JSONObject().apply {
+                    put("policy", observation.policy)
+                    putNullable("startHz", observation.startHz)
+                    putNullable("minimumObservedHz", observation.minimumObservedHz)
+                    putNullable("peakObservedHz", observation.peakObservedHz)
+                    putNullable("endHz", observation.endHz)
+                })
+            }
+        })
+        putNullable("startPowerObservation", session.startPowerObservation?.let(::powerToJson))
+        putNullable("endPowerObservation", session.endPowerObservation?.let(::powerToJson))
+        putNullable("peakEstimatedBatteryPowerWatts", session.peakEstimatedBatteryPowerWatts)
+        put("peakVisualFps", session.peakVisualFps)
+        put("averageVisualFrameTimeNanos", session.averageVisualFrameTimeNanos)
         putNullable("stopReason", session.stopReason?.name)
         putNullable("lastError", session.lastError)
     }
@@ -80,6 +105,15 @@ object SessionJsonCodec {
             highestThermalStatus = json.optInt("highestThermalStatus", 0),
             stopReason = json.optionalEnum("stopReason", StopReason::valueOf),
             lastError = json.optionalString("lastError"),
+            thermalTimeline = json.optJSONArray("thermalTimeline").toThermalEvents(),
+            cpuFrequencyObservations =
+                json.optJSONArray("cpuFrequencyObservations").toCpuFrequencyObservations(),
+            startPowerObservation = json.optJSONObject("startPowerObservation")?.toPowerObservation(),
+            endPowerObservation = json.optJSONObject("endPowerObservation")?.toPowerObservation(),
+            peakEstimatedBatteryPowerWatts =
+                json.optionalDouble("peakEstimatedBatteryPowerWatts"),
+            peakVisualFps = json.optDouble("peakVisualFps", 0.0),
+            averageVisualFrameTimeNanos = json.optDouble("averageVisualFrameTimeNanos", 0.0),
         )
     }
 
@@ -95,6 +129,7 @@ object SessionJsonCodec {
             put("memoryTarget", configuration.memoryTarget.name)
             put("storageMode", configuration.storageMode.name)
             put("storageLevel", configuration.storageLevel.name)
+            put("gpuMode", configuration.gpuMode.name)
             put("duration", configuration.duration.name)
         }
 
@@ -125,6 +160,11 @@ object SessionJsonCodec {
                 StorageLevel.LOW,
                 StorageLevel::valueOf,
             ),
+            gpuMode = json.enumValue(
+                "gpuMode",
+                GpuMode.COMPUTE,
+                GpuMode::valueOf,
+            ),
             duration = json.enumValue(
                 "duration",
                 StressDuration.MINUTES_5,
@@ -151,6 +191,64 @@ object SessionJsonCodec {
         fallback: T,
         parser: (String) -> T,
     ): T = runCatching { parser(optString(key, fallback.toString())) }.getOrDefault(fallback)
+
+    private fun powerToJson(observation: PowerObservation): JSONObject = JSONObject().apply {
+        put("elapsedTimeMs", observation.elapsedTimeMs)
+        putNullable("batteryLevelPercent", observation.batteryLevelPercent)
+        put("chargingState", observation.chargingState)
+        putNullable("voltageVolts", observation.voltageVolts)
+        putNullable("currentAmpsRaw", observation.currentAmpsRaw)
+        putNullable("estimatedBatteryPowerWatts", observation.estimatedBatteryPowerWatts)
+    }
+
+    private fun JSONObject.toPowerObservation(): PowerObservation = PowerObservation(
+        elapsedTimeMs = optLong("elapsedTimeMs", 0L),
+        batteryLevelPercent = if (has("batteryLevelPercent") && !isNull("batteryLevelPercent")) {
+            optInt("batteryLevelPercent")
+        } else {
+            null
+        },
+        chargingState = optString("chargingState", "UNKNOWN"),
+        voltageVolts = optionalDouble("voltageVolts"),
+        currentAmpsRaw = optionalDouble("currentAmpsRaw"),
+        estimatedBatteryPowerWatts = optionalDouble("estimatedBatteryPowerWatts"),
+    )
+
+    private fun JSONArray?.toThermalEvents(): List<ThermalEvent> = buildList {
+        val array = this@toThermalEvents ?: return@buildList
+        for (index in 0 until array.length()) {
+            val item = array.optJSONObject(index) ?: continue
+            add(
+                ThermalEvent(
+                    elapsedTimeMs = item.optLong("elapsedTimeMs", 0L),
+                    status = item.optInt("status", 0),
+                    batteryTemperatureCelsius = item.optionalDouble(
+                        "batteryTemperatureCelsius",
+                    ),
+                ),
+            )
+        }
+    }
+
+    private fun JSONArray?.toCpuFrequencyObservations(): List<CpuFrequencySessionObservation> =
+        buildList {
+            val array = this@toCpuFrequencyObservations ?: return@buildList
+            for (index in 0 until array.length()) {
+                val item = array.optJSONObject(index) ?: continue
+                add(
+                    CpuFrequencySessionObservation(
+                        policy = item.optString("policy", "Unknown"),
+                        startHz = item.optionalLong("startHz"),
+                        minimumObservedHz = item.optionalLong("minimumObservedHz"),
+                        peakObservedHz = item.optionalLong("peakObservedHz"),
+                        endHz = item.optionalLong("endHz"),
+                    ),
+                )
+            }
+        }
+
+    private fun JSONObject.optionalLong(key: String): Long? =
+        if (!has(key) || isNull(key)) null else optLong(key)
 }
 
 class SessionHistoryStore(context: Context) {
@@ -162,7 +260,7 @@ class SessionHistoryStore(context: Context) {
             val updated = ArrayList<StressSessionSnapshot>()
             updated += session
             updated += readInternal().filter { it.startWallTimeMs != session.startWallTimeMs }
-            writeInternal(updated.take(limit.coerceIn(1, AppPreferences.MAX_HISTORY_LIMIT)))
+            writeInternal(HistoryPolicy.trimNewest(updated, limit))
         }
     }
 
@@ -180,7 +278,7 @@ class SessionHistoryStore(context: Context) {
 
     fun trim(limit: Int) {
         synchronized(lock) {
-            writeInternal(readInternal().take(limit.coerceIn(1, AppPreferences.MAX_HISTORY_LIMIT)))
+            writeInternal(HistoryPolicy.trimNewest(readInternal(), limit))
         }
     }
 

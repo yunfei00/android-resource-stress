@@ -1,78 +1,174 @@
 package com.androidresourcestress
 
+import android.content.Context
+import android.os.PowerManager
 import java.text.DateFormat
 import java.util.Date
 import java.util.Locale
 
 object SessionResultFormatter {
-    fun compact(session: StressSessionSnapshot): String = buildString {
+    fun compact(context: Context, session: StressSessionSnapshot): String = buildString {
         append(DateFormat.getDateTimeInstance().format(Date(session.startWallTimeMs)))
-        append(" · ").append(session.configuration.preset.name)
+        append(" · ").append(context.presetLabel(session.configuration.preset))
         append(" · ").append(DurationFormatter.format(session.elapsedTimeMs))
         append('\n')
-        append(enabledResources(session.configuration))
-        append(" · ").append(session.stopReason?.name ?: "UNKNOWN")
+        append(enabledResources(context, session.configuration))
+        append(" · ").append(context.stopReasonLabel(session.stopReason))
         append('\n')
-        append(String.format(Locale.US, "CPU %.1f%% · GPU %.1f dispatch/s", session.peakCpuLoadPercent, session.peakDispatchRate))
-        append(" · PSS ").append(ByteFormatter.formatBytes(session.peakAppPssBytes))
+        append(
+            context.getString(
+                R.string.compact_peaks,
+                session.peakCpuLoadPercent,
+                session.peakDispatchRate,
+                ByteFormatter.formatBytes(session.peakAppPssBytes),
+            ),
+        )
         if (session.configuration.storageEnabled) {
-            append('\n').append("Storage ").append(session.configuration.storageMode.name)
-            append(" · R ").append(ByteFormatter.formatBytes(session.storageBytesRead))
-            append(" · W ").append(ByteFormatter.formatBytes(session.storageBytesWritten))
+            append('\n').append(context.getString(R.string.label_storage)).append(' ')
+            append(session.configuration.storageMode.name)
+            append(" · ").append(
+                context.getString(R.string.read_short, ByteFormatter.formatBytes(session.storageBytesRead)),
+            )
+            append(" · ").append(
+                context.getString(
+                    R.string.written_short,
+                    ByteFormatter.formatBytes(session.storageBytesWritten),
+                ),
+            )
         } else {
-            append('\n').append("Storage: Not enabled")
+            append('\n').append(context.getString(R.string.storage_not_enabled))
         }
-        append('\n').append("Peak battery ").append(temperature(session.peakBatteryTemperatureCelsius))
-        append(" · ").append(thermalStatusLabel(session.highestThermalStatus))
+        append('\n').append(
+            context.getString(
+                R.string.peak_battery_compact,
+                temperature(session.peakBatteryTemperatureCelsius),
+            ),
+        )
+        append(" · ").append(context.thermalStatusDisplay(session.highestThermalStatus))
     }
 
-    fun detailed(session: StressSessionSnapshot): String = buildString {
-        append(compact(session)).append("\n\n")
-        append("Session ID: ").append(session.sessionId).append('\n')
-        append("Configured duration: ").append(session.configuration.duration.displayLabel).append('\n')
-        append("CPU target / peak: ").append(session.configuration.cpuTargetPercent).append("% / ")
-        append(String.format(Locale.US, "%.1f%%", session.peakCpuLoadPercent)).append('\n')
-        append("Core equivalent peak: ").append(String.format(Locale.US, "%.1f%%", session.peakCoreEquivalentPercent)).append('\n')
-        append("GPU target / peak dispatch: ").append(session.configuration.gpuTargetPercent).append("% / ")
-        append(String.format(Locale.US, "%.1f dispatch/s", session.peakDispatchRate)).append('\n')
-        append("GPU average work time: ").append(String.format(Locale.US, "%.3f ms", session.averageGpuWorkTimeNanos / 1_000_000.0)).append('\n')
-        append("Memory target / allocated: ").append(ByteFormatter.formatBytes(session.resolvedMemoryTargetBytes))
-        append(" / ").append(ByteFormatter.formatBytes(session.allocatedMemoryBytes)).append('\n')
-        append("Peak app / native PSS: ").append(ByteFormatter.formatBytes(session.peakAppPssBytes))
-        append(" / ").append(ByteFormatter.formatBytes(session.peakNativePssBytes)).append('\n')
-        append("Peak memory activity: ").append(ByteFormatter.formatRate(session.peakMemoryActivityBytesPerSecond)).append('\n')
-        append("Storage: ")
-        if (session.configuration.storageEnabled) {
-            append(session.configuration.storageMode.name).append(" / ").append(session.configuration.storageLevel.displayLabel).append('\n')
-            append("Working set: ").append(ByteFormatter.formatBytes(session.storageWorkingSetBytes)).append('\n')
-            append("Read / written: ").append(ByteFormatter.formatBytes(session.storageBytesRead)).append(" / ")
-            append(ByteFormatter.formatBytes(session.storageBytesWritten)).append('\n')
-            append("Peak read / write activity: ").append(ByteFormatter.formatRate(session.peakStorageReadActivityBytesPerSecond))
-            append(" / ").append(ByteFormatter.formatRate(session.peakStorageWriteActivityBytesPerSecond)).append('\n')
-        } else {
-            append("Not enabled\n")
+    fun detailed(context: Context, session: StressSessionSnapshot): String = buildString {
+        append(compact(context, session)).append("\n\n")
+        line(context.getString(R.string.label_session_id), session.sessionId.toString())
+        line(context.getString(R.string.label_configured_duration), context.durationLabel(session.configuration.duration))
+        line(
+            context.getString(R.string.label_cpu_target_peak),
+            "${session.configuration.cpuTargetPercent}% / ${percent(session.peakCpuLoadPercent)}",
+        )
+        line(context.getString(R.string.label_core_peak), percent(session.peakCoreEquivalentPercent))
+        line(
+            context.getString(R.string.label_gpu_target_dispatch),
+            "${session.configuration.gpuTargetPercent}% / " +
+                String.format(Locale.US, "%.1f dispatch/s", session.peakDispatchRate),
+        )
+        line(
+            context.getString(R.string.label_gpu_average_work),
+            String.format(Locale.US, "%.3f ms", session.averageGpuWorkTimeNanos / 1_000_000.0),
+        )
+        if (session.configuration.gpuMode != GpuMode.COMPUTE) {
+            line(
+                context.getString(R.string.label_visual_peak_fps),
+                String.format(Locale.US, "%.1f FPS", session.peakVisualFps),
+            )
+            line(
+                context.getString(R.string.label_visual_average_frame),
+                String.format(Locale.US, "%.2f ms", session.averageVisualFrameTimeNanos / 1_000_000.0),
+            )
         }
-        append("Battery temperature start / peak: ").append(temperature(session.startBatteryTemperatureCelsius))
-        append(" / ").append(temperature(session.peakBatteryTemperatureCelsius)).append('\n')
-        append("Battery temperature delta: ").append(temperatureDelta(session)).append('\n')
-        append("Highest thermal status: ").append(thermalStatusLabel(session.highestThermalStatus)).append('\n')
-        append("Error: ").append(session.lastError ?: "None")
+        line(
+            context.getString(R.string.label_memory_target_allocated),
+            "${ByteFormatter.formatBytes(session.resolvedMemoryTargetBytes)} / " +
+                ByteFormatter.formatBytes(session.allocatedMemoryBytes),
+        )
+        line(
+            context.getString(R.string.label_peak_pss),
+            "${ByteFormatter.formatBytes(session.peakAppPssBytes)} / " +
+                ByteFormatter.formatBytes(session.peakNativePssBytes),
+        )
+        line(
+            context.getString(R.string.label_peak_memory_activity),
+            ByteFormatter.formatRate(session.peakMemoryActivityBytesPerSecond),
+        )
+        if (session.configuration.storageEnabled) {
+            line(
+                context.getString(R.string.label_storage),
+                "${session.configuration.storageMode.name} / ${session.configuration.storageLevel.displayLabel}",
+            )
+            line(context.getString(R.string.label_working_set), ByteFormatter.formatBytes(session.storageWorkingSetBytes))
+            line(
+                context.getString(R.string.label_read_written),
+                "${ByteFormatter.formatBytes(session.storageBytesRead)} / ${ByteFormatter.formatBytes(session.storageBytesWritten)}",
+            )
+            line(
+                context.getString(R.string.label_peak_storage_activity),
+                "${ByteFormatter.formatRate(session.peakStorageReadActivityBytesPerSecond)} / " +
+                    ByteFormatter.formatRate(session.peakStorageWriteActivityBytesPerSecond),
+            )
+        } else {
+            append(context.getString(R.string.storage_not_enabled)).append('\n')
+        }
+        line(
+            context.getString(R.string.label_battery_start_peak),
+            "${temperature(session.startBatteryTemperatureCelsius)} / ${temperature(session.peakBatteryTemperatureCelsius)}",
+        )
+        line(context.getString(R.string.label_battery_delta_result), temperatureDelta(session))
+        line(context.getString(R.string.label_highest_thermal), context.thermalStatusDisplay(session.highestThermalStatus))
+        line(context.getString(R.string.label_peak_estimated_power), context.powerDisplay(session.peakEstimatedBatteryPowerWatts))
+        append('\n').append(context.getString(R.string.thermal_timeline_title)).append('\n')
+        session.thermalTimeline.forEach { event ->
+            append(
+                context.getString(
+                    R.string.thermal_timeline_event,
+                    DurationFormatter.format(event.elapsedTimeMs),
+                    thermalStatusLabel(event.status),
+                    temperature(event.batteryTemperatureCelsius),
+                ),
+            ).append('\n')
+        }
+        line(context.getString(R.string.time_to_moderate), timeToStatus(context, session, PowerManager.THERMAL_STATUS_MODERATE))
+        line(context.getString(R.string.time_to_severe), timeToStatus(context, session, PowerManager.THERMAL_STATUS_SEVERE))
+        if (session.cpuFrequencyObservations.isNotEmpty()) {
+            append('\n').append(context.getString(R.string.cpu_frequency_title)).append('\n')
+            session.cpuFrequencyObservations.forEach { observation ->
+                append(
+                    context.getString(
+                        R.string.cpu_frequency_observation,
+                        observation.policy,
+                        context.frequencyDisplay(observation.startHz),
+                        context.frequencyDisplay(observation.minimumObservedHz),
+                        context.frequencyDisplay(observation.peakObservedHz),
+                        context.frequencyDisplay(observation.endHz),
+                    ),
+                ).append('\n')
+            }
+        }
+        line(context.getString(R.string.label_error), session.lastError ?: context.getString(R.string.none))
     }
 
-    fun enabledResources(configuration: CombinedStressConfiguration): String = buildList {
-        if (configuration.cpuEnabled) add("CPU")
-        if (configuration.gpuEnabled) add("GPU")
-        if (configuration.memoryEnabled) add("MEMORY")
-        if (configuration.storageEnabled) add("STORAGE")
-    }.joinToString(" + ").ifBlank { "None" }
+    fun enabledResources(context: Context, configuration: CombinedStressConfiguration): String =
+        buildList {
+            if (configuration.cpuEnabled) add("CPU")
+            if (configuration.gpuEnabled) add("GPU ${context.gpuModeLabel(configuration.gpuMode)}")
+            if (configuration.memoryEnabled) add(context.getString(R.string.resource_memory))
+            if (configuration.storageEnabled) add(context.getString(R.string.resource_storage))
+        }.joinToString(" + ").ifBlank { context.getString(R.string.none) }
 
-    private fun temperature(value: Double?): String = value?.let {
-        String.format(Locale.US, "%.1f °C", it)
-    } ?: "N/A"
+    private fun StringBuilder.line(label: String, value: String) {
+        append(label).append(": ").append(value).append('\n')
+    }
+
+    private fun temperature(value: Double?): String = TemperatureFormatter.format(value)
 
     private fun temperatureDelta(session: StressSessionSnapshot): String {
         val start = session.startBatteryTemperatureCelsius ?: return "N/A"
         val peak = session.peakBatteryTemperatureCelsius ?: return "N/A"
         return String.format(Locale.US, "%+.1f °C", peak - start)
     }
+
+    private fun percent(value: Double): String = String.format(Locale.US, "%.1f%%", value)
+
+    private fun timeToStatus(context: Context, session: StressSessionSnapshot, status: Int): String =
+        ThermalTimelineAnalysis.timeToStatus(session.thermalTimeline, status)?.let {
+            DurationFormatter.format(it)
+        } ?: context.getString(R.string.not_reached)
 }

@@ -1,20 +1,19 @@
 package com.androidresourcestress
 
-import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
 import android.os.Bundle
 import android.widget.LinearLayout
 import android.widget.TextView
 
-class HistoryActivity : Activity() {
+class HistoryActivity : LocalizedActivity() {
     private lateinit var content: LinearLayout
     private lateinit var store: SessionHistoryStore
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         store = SessionHistoryStore(this)
-        content = PageUi.content(this, "SESSION HISTORY")
+        content = PageUi.content(this, getString(R.string.history_title))
     }
 
     override fun onResume() {
@@ -25,16 +24,20 @@ class HistoryActivity : Activity() {
     private fun renderHistory() {
         while (content.childCount > FIXED_CHILDREN) content.removeViewAt(FIXED_CHILDREN)
         val sessions = store.list()
-        content.addView(PageUi.secondary(this, "${sessions.size} saved sessions · newest first"))
-        content.addView(PageUi.button(this, "CLEAR HISTORY") {
+        content.addView(PageUi.secondary(this, resources.getQuantityString(
+            R.plurals.saved_sessions,
+            sessions.size,
+            sessions.size,
+        )))
+        content.addView(PageUi.button(this, getString(R.string.clear_history)) {
             AlertDialog.Builder(this)
-                .setTitle("Clear history?")
-                .setMessage("All saved stress session results will be deleted.")
-                .setPositiveButton("CLEAR") { _, _ ->
+                .setTitle(R.string.clear_history_title)
+                .setMessage(R.string.clear_history_message)
+                .setPositiveButton(R.string.clear) { _, _ ->
                     store.clear()
                     renderHistory()
                 }
-                .setNegativeButton("CANCEL", null)
+                .setNegativeButton(R.string.cancel, null)
                 .show()
         }, PageUi.matchWrap())
         if (sessions.isEmpty()) {
@@ -43,7 +46,7 @@ class HistoryActivity : Activity() {
         }
         sessions.forEach { session ->
             content.addView(TextView(this).apply {
-                text = SessionResultFormatter.compact(session)
+                text = SessionResultFormatter.compact(this@HistoryActivity, session)
                 textSize = 13f
                 setTextColor(getColor(R.color.text_primary))
                 setBackgroundResource(R.drawable.card_background)

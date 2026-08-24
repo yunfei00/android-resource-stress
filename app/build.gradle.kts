@@ -45,6 +45,12 @@ android {
         buildConfig = true
     }
 
+    bundle {
+        language {
+            enableSplit = false
+        }
+    }
+
     buildToolsVersion = "36.0.0"
 
     compileOptions {

@@ -125,6 +125,10 @@
             <include layout="@layout/row_app_cpu_load" />
             <include layout="@layout/row_core_equivalent" />
             <include layout="@layout/row_threads" />
+            <LinearLayout style="@style/MetricRow">
+                <TextView style="@style/MetricLabel" android:text="@string/label_cpu_frequency" />
+                <TextView android:id="@+id/cpuFrequencyValue" style="@style/GpuMetricValue" android:text="@string/unsupported" />
+            </LinearLayout>
         </LinearLayout>
 
         <include layout="@layout/gpu_section" />
@@ -150,6 +154,10 @@
             </LinearLayout>
             <include layout="@layout/row_thermal_status" />
             <LinearLayout style="@style/MetricRow">
+                <TextView style="@style/MetricLabel" android:text="@string/label_highest_sensor" />
+                <TextView android:id="@+id/highestThermalSensorValue" style="@style/GpuMetricValue" android:text="@string/unsupported" />
+            </LinearLayout>
+            <LinearLayout style="@style/MetricRow">
                 <TextView style="@style/MetricLabel" android:text="@string/label_battery_current" />
                 <TextView android:id="@+id/batteryTemperatureValue" style="@style/MetricValue" android:text="@string/not_available" />
             </LinearLayout>
@@ -172,6 +180,30 @@
                 android:text="@string/thermal_normal"
                 android:textColor="@color/text_secondary"
                 android:textSize="13sp" />
+        </LinearLayout>
+
+        <LinearLayout style="@style/SectionCard" android:orientation="vertical">
+            <TextView style="@style/SectionTitle" android:text="@string/section_power" />
+            <LinearLayout style="@style/MetricRow">
+                <TextView style="@style/MetricLabel" android:text="@string/label_battery_level" />
+                <TextView android:id="@+id/batteryLevelValue" style="@style/MetricValue" android:text="@string/unsupported" />
+            </LinearLayout>
+            <LinearLayout style="@style/MetricRow">
+                <TextView style="@style/MetricLabel" android:text="@string/label_charging_state" />
+                <TextView android:id="@+id/chargingStateValue" style="@style/MetricValue" android:text="@string/unknown" />
+            </LinearLayout>
+            <LinearLayout style="@style/MetricRow">
+                <TextView style="@style/MetricLabel" android:text="@string/label_voltage" />
+                <TextView android:id="@+id/batteryVoltageValue" style="@style/MetricValue" android:text="@string/unsupported" />
+            </LinearLayout>
+            <LinearLayout style="@style/MetricRow">
+                <TextView style="@style/MetricLabel" android:text="@string/label_current_raw" />
+                <TextView android:id="@+id/batteryCurrentValue" style="@style/MetricValue" android:text="@string/unsupported" />
+            </LinearLayout>
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal">
+                <TextView style="@style/MetricLabel" android:text="@string/label_estimated_battery_power" />
+                <TextView android:id="@+id/batteryPowerValue" style="@style/MetricValue" android:text="@string/unsupported" />
+            </LinearLayout>
         </LinearLayout>
 
         <LinearLayout style="@style/SectionCard" android:orientation="vertical">
@@ -294,6 +326,18 @@
                 <RadioButton android:id="@+id/gpu50" style="@style/ConfigChoice" android:text="@string/load_50" />
                 <RadioButton android:id="@+id/gpu75" style="@style/ConfigChoice" android:text="@string/load_75" />
                 <RadioButton android:id="@+id/gpu100" style="@style/ConfigChoice" android:checked="true" android:text="@string/load_100" />
+            </RadioGroup>
+
+            <TextView style="@style/ConfigLabel" android:text="@string/gpu_mode" />
+            <RadioGroup
+                android:id="@+id/gpuModeGroup"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="12dp"
+                android:orientation="horizontal">
+                <RadioButton android:id="@+id/gpuModeCompute" style="@style/ConfigChoice" android:checked="true" android:text="@string/gpu_mode_compute" />
+                <RadioButton android:id="@+id/gpuModeVisual" style="@style/ConfigChoice" android:text="@string/gpu_mode_visual" />
+                <RadioButton android:id="@+id/gpuModeMixed" style="@style/ConfigChoice" android:text="@string/gpu_mode_mixed" />
             </RadioGroup>
 
             <TextView style="@style/ConfigLabel" android:text="@string/ram_target" />

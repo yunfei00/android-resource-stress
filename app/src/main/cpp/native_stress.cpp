@@ -6,11 +6,13 @@
 #include "cpu_stress.h"
 #include "gpu_stress.h"
 #include "memory_stress.h"
+#include "visual_gpu_stress.h"
 
 namespace {
 CpuStress gCpuStress;
 MemoryStress gMemoryStress;
 GpuStress gGpuStress;
+VisualGpuStress gVisualGpuStress;
 
 jstring toJavaString(JNIEnv* environment, const std::string& value) {
     return environment->NewStringUTF(value.c_str());
@@ -156,6 +158,30 @@ jstring getGpuLastError(JNIEnv* environment, jclass) {
     return toJavaString(environment, gGpuStress.lastError());
 }
 
+jboolean startVisualGpuStress(JNIEnv*, jclass, jint targetLoadPercent) {
+    return gVisualGpuStress.start(targetLoadPercent) ? JNI_TRUE : JNI_FALSE;
+}
+
+void stopVisualGpuStress(JNIEnv*, jclass) {
+    gVisualGpuStress.stop();
+}
+
+jint getVisualGpuStressStatus(JNIEnv*, jclass) {
+    return static_cast<jint>(gVisualGpuStress.status());
+}
+
+jlong getVisualGpuFrameCount(JNIEnv*, jclass) {
+    return static_cast<jlong>(gVisualGpuStress.frameCount());
+}
+
+jlong getVisualGpuFrameWorkNanos(JNIEnv*, jclass) {
+    return static_cast<jlong>(gVisualGpuStress.lastFrameWorkNanos());
+}
+
+jstring getVisualGpuLastError(JNIEnv* environment, jclass) {
+    return toJavaString(environment, gVisualGpuStress.lastError());
+}
+
 JNINativeMethod kMethods[] = {
     {const_cast<char*>("startCpuStress"), const_cast<char*>("(II)Z"),
      reinterpret_cast<void*>(startCpuStress)},
@@ -225,6 +251,18 @@ JNINativeMethod kMethods[] = {
      reinterpret_cast<void*>(getGpuOutputChecksum)},
     {const_cast<char*>("getGpuLastError"), const_cast<char*>("()Ljava/lang/String;"),
      reinterpret_cast<void*>(getGpuLastError)},
+    {const_cast<char*>("startVisualGpuStress"), const_cast<char*>("(I)Z"),
+     reinterpret_cast<void*>(startVisualGpuStress)},
+    {const_cast<char*>("stopVisualGpuStress"), const_cast<char*>("()V"),
+     reinterpret_cast<void*>(stopVisualGpuStress)},
+    {const_cast<char*>("getVisualGpuStressStatus"), const_cast<char*>("()I"),
+     reinterpret_cast<void*>(getVisualGpuStressStatus)},
+    {const_cast<char*>("getVisualGpuFrameCount"), const_cast<char*>("()J"),
+     reinterpret_cast<void*>(getVisualGpuFrameCount)},
+    {const_cast<char*>("getVisualGpuFrameWorkNanos"), const_cast<char*>("()J"),
+     reinterpret_cast<void*>(getVisualGpuFrameWorkNanos)},
+    {const_cast<char*>("getVisualGpuLastError"), const_cast<char*>("()Ljava/lang/String;"),
+     reinterpret_cast<void*>(getVisualGpuLastError)},
 };
 }  // namespace
 
@@ -254,4 +292,5 @@ extern "C" JNIEXPORT void JNICALL JNI_OnUnload(JavaVM*, void*) {
     gCpuStress.stop();
     gMemoryStress.stop();
     gGpuStress.shutdown();
+    gVisualGpuStress.stop();
 }

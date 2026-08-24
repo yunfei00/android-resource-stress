@@ -23,6 +23,12 @@ enum class MemoryTarget(val fixedBytes: Long?) {
     AUTO(null),
 }
 
+enum class GpuMode {
+    COMPUTE,
+    VISUAL,
+    MIXED,
+}
+
 enum class StressDuration(val durationMs: Long, val displayLabel: String) {
     SECONDS_30(30_000L, "30 seconds"),
     MINUTE_1(60_000L, "1 minute"),
@@ -52,7 +58,31 @@ data class CombinedStressConfiguration(
     val memoryTarget: MemoryTarget,
     val storageMode: StorageMode = StorageMode.MIXED,
     val storageLevel: StorageLevel = StorageLevel.LOW,
+    val gpuMode: GpuMode = GpuMode.COMPUTE,
     val duration: StressDuration,
+)
+
+data class ThermalEvent(
+    val elapsedTimeMs: Long,
+    val status: Int,
+    val batteryTemperatureCelsius: Double?,
+)
+
+data class CpuFrequencySessionObservation(
+    val policy: String,
+    val startHz: Long?,
+    val minimumObservedHz: Long?,
+    val peakObservedHz: Long?,
+    val endHz: Long?,
+)
+
+data class PowerObservation(
+    val elapsedTimeMs: Long,
+    val batteryLevelPercent: Int?,
+    val chargingState: String,
+    val voltageVolts: Double?,
+    val currentAmpsRaw: Double?,
+    val estimatedBatteryPowerWatts: Double?,
 )
 
 data class StressSessionSnapshot(
@@ -79,6 +109,13 @@ data class StressSessionSnapshot(
     val highestThermalStatus: Int,
     val stopReason: StopReason?,
     val lastError: String?,
+    val thermalTimeline: List<ThermalEvent> = emptyList(),
+    val cpuFrequencyObservations: List<CpuFrequencySessionObservation> = emptyList(),
+    val startPowerObservation: PowerObservation? = null,
+    val endPowerObservation: PowerObservation? = null,
+    val peakEstimatedBatteryPowerWatts: Double? = null,
+    val peakVisualFps: Double = 0.0,
+    val averageVisualFrameTimeNanos: Double = 0.0,
 )
 
 data class CombinedRuntimeSnapshot(
@@ -98,7 +135,36 @@ data class CombinedRuntimeSnapshot(
     val storage: StorageRuntimeSnapshot,
     val thermal: ThermalSnapshot,
     val lastError: String?,
+    val hardware: HardwareSnapshot = HardwareSnapshot.empty(),
+    val visualFps: Double = 0.0,
+    val visualFrameTimeNanos: Double = 0.0,
+    val visualVulkanFrameCount: Long = 0L,
+    val visualVulkanFrameWorkNanos: Long = 0L,
 )
+
+object ThermalPolicy {
+    fun shouldStop(status: Int): Boolean =
+        status >= android.os.PowerManager.THERMAL_STATUS_CRITICAL
+
+    fun isWarning(status: Int): Boolean =
+        status >= android.os.PowerManager.THERMAL_STATUS_MODERATE
+
+    fun isSevere(status: Int): Boolean =
+        status >= android.os.PowerManager.THERMAL_STATUS_SEVERE
+}
+
+object ThermalTimelineAnalysis {
+    fun timeToStatus(events: List<ThermalEvent>, targetStatus: Int): Long? =
+        events.firstOrNull { it.status >= targetStatus }?.elapsedTimeMs
+
+    fun appendIfChanged(events: List<ThermalEvent>, event: ThermalEvent): List<ThermalEvent> =
+        if (events.lastOrNull()?.status == event.status) events else events + event
+}
+
+object HistoryPolicy {
+    fun <T> trimNewest(items: List<T>, limit: Int): List<T> =
+        items.take(limit.coerceIn(1, AppPreferences.MAX_HISTORY_LIMIT))
+}
 
 object PresetConfigurations {
     fun create(

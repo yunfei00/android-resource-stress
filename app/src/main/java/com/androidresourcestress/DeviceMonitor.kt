@@ -7,6 +7,7 @@ import android.os.BatteryManager
 import android.os.Build
 import android.os.PowerManager
 import android.os.StatFs
+import java.util.concurrent.TimeUnit
 
 data class DeviceInfo(
     val manufacturer: String,
@@ -16,6 +17,13 @@ data class DeviceInfo(
     val sdk: Int,
     val primaryAbi: String,
     val logicalCoreCount: Int,
+    val socManufacturer: String,
+    val socModel: String,
+    val boardPlatform: String,
+    val hardware: String,
+    val board: String,
+    val buildFingerprint: String,
+    val kernelVersion: String,
 )
 
 data class ThermalSnapshot(
@@ -25,6 +33,9 @@ data class ThermalSnapshot(
     val statusLabel: String
         get() = thermalStatusLabel(status)
 
+    val requiresImmediateStop: Boolean
+        get() = ThermalPolicy.shouldStop(status)
+
     val isSevereOrHigher: Boolean
         get() = status >= PowerManager.THERMAL_STATUS_SEVERE
 }
@@ -32,15 +43,34 @@ data class ThermalSnapshot(
 class DeviceMonitor(private val context: Context) {
     private val powerManager = context.getSystemService(PowerManager::class.java)
 
-    fun deviceInfo(): DeviceInfo = DeviceInfo(
-        manufacturer = Build.MANUFACTURER.orEmpty().ifBlank { "Unknown" },
-        brand = Build.BRAND.orEmpty().ifBlank { "Unknown" },
-        model = Build.MODEL.orEmpty().ifBlank { "Unknown" },
-        androidVersion = Build.VERSION.RELEASE.orEmpty().ifBlank { "Unknown" },
-        sdk = Build.VERSION.SDK_INT,
-        primaryAbi = Build.SUPPORTED_ABIS.firstOrNull() ?: "Unknown",
-        logicalCoreCount = Runtime.getRuntime().availableProcessors().coerceAtLeast(1),
-    )
+    fun deviceInfo(): DeviceInfo {
+        val socManufacturer = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            Build.SOC_MANUFACTURER
+        } else {
+            "Unknown"
+        }.orEmpty().ifBlank { "Unknown" }
+        val socModel = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            Build.SOC_MODEL
+        } else {
+            "Unknown"
+        }.orEmpty().ifBlank { "Unknown" }
+        return DeviceInfo(
+            manufacturer = Build.MANUFACTURER.orEmpty().ifBlank { "Unknown" },
+            brand = Build.BRAND.orEmpty().ifBlank { "Unknown" },
+            model = Build.MODEL.orEmpty().ifBlank { "Unknown" },
+            androidVersion = Build.VERSION.RELEASE.orEmpty().ifBlank { "Unknown" },
+            sdk = Build.VERSION.SDK_INT,
+            primaryAbi = Build.SUPPORTED_ABIS.firstOrNull() ?: "Unknown",
+            logicalCoreCount = Runtime.getRuntime().availableProcessors().coerceAtLeast(1),
+            socManufacturer = socManufacturer,
+            socModel = socModel,
+            boardPlatform = systemProperty("ro.board.platform"),
+            hardware = Build.HARDWARE.orEmpty().ifBlank { "Unknown" },
+            board = Build.BOARD.orEmpty().ifBlank { "Unknown" },
+            buildFingerprint = Build.FINGERPRINT.orEmpty().ifBlank { "Unknown" },
+            kernelVersion = System.getProperty("os.version").orEmpty().ifBlank { "Unknown" },
+        )
+    }
 
     fun storageCapacity(): StorageCapacity {
         val stats = StatFs(context.filesDir.absolutePath)
@@ -64,6 +94,16 @@ class DeviceMonitor(private val context: Context) {
             status = powerManager.currentThermalStatus,
         )
     }
+
+    private fun systemProperty(key: String): String = runCatching {
+        val process = ProcessBuilder("/system/bin/getprop", key).redirectErrorStream(true).start()
+        if (!process.waitFor(500L, TimeUnit.MILLISECONDS)) {
+            process.destroyForcibly()
+            "Unknown"
+        } else {
+            process.inputStream.bufferedReader().use { it.readText() }.trim()
+        }
+    }.getOrDefault("Unknown").ifBlank { "Unknown" }
 }
 
 fun thermalStatusLabel(status: Int): String = when (status) {

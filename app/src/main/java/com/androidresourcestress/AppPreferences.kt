@@ -20,6 +20,10 @@ class AppPreferences(context: Context) {
         get() = preferences.getBoolean(KEY_CONFIRM_STORAGE, true)
         set(value) = preferences.edit().putBoolean(KEY_CONFIRM_STORAGE, value).apply()
 
+    var language: AppLanguage
+        get() = enumPreference(KEY_LANGUAGE, AppLanguage.SYSTEM)
+        set(value) = preferences.edit().putString(KEY_LANGUAGE, value.name).apply()
+
     fun loadConfiguration(): CombinedStressConfiguration {
         val preset = enumPreference(KEY_PRESET, StressPreset.EXTREME)
         val fallback = PresetConfigurations.create(preset)
@@ -40,6 +44,7 @@ class AppPreferences(context: Context) {
             memoryTarget = enumPreference(KEY_MEMORY_TARGET, fallback.memoryTarget),
             storageMode = enumPreference(KEY_STORAGE_MODE, StorageMode.MIXED),
             storageLevel = enumPreference(KEY_STORAGE_LEVEL, StorageLevel.LOW),
+            gpuMode = enumPreference(KEY_GPU_MODE, GpuMode.COMPUTE),
             duration = enumPreference(KEY_DURATION, StressDuration.MINUTES_5),
         )
     }
@@ -56,6 +61,7 @@ class AppPreferences(context: Context) {
             .putString(KEY_MEMORY_TARGET, configuration.memoryTarget.name)
             .putString(KEY_STORAGE_MODE, configuration.storageMode.name)
             .putString(KEY_STORAGE_LEVEL, configuration.storageLevel.name)
+            .putString(KEY_GPU_MODE, configuration.gpuMode.name)
             .putString(KEY_DURATION, configuration.duration.name)
             .apply()
     }
@@ -67,6 +73,7 @@ class AppPreferences(context: Context) {
             presetConfiguration.copy(
                 storageMode = current.storageMode,
                 storageLevel = current.storageLevel,
+                gpuMode = current.gpuMode,
             ),
         )
     }
@@ -85,6 +92,7 @@ class AppPreferences(context: Context) {
         private const val KEY_KEEP_SCREEN_ON = "keep_screen_on"
         private const val KEY_HISTORY_LIMIT = "history_limit"
         private const val KEY_CONFIRM_STORAGE = "confirm_storage"
+        private const val KEY_LANGUAGE = "language"
         private const val KEY_PRESET = "preset"
         private const val KEY_CPU_ENABLED = "cpu_enabled"
         private const val KEY_GPU_ENABLED = "gpu_enabled"
@@ -95,8 +103,9 @@ class AppPreferences(context: Context) {
         private const val KEY_MEMORY_TARGET = "memory_target"
         private const val KEY_STORAGE_MODE = "storage_mode"
         private const val KEY_STORAGE_LEVEL = "storage_level"
+        private const val KEY_GPU_MODE = "gpu_mode"
         private const val KEY_DURATION = "duration"
-        const val DEFAULT_HISTORY_LIMIT = 20
+        const val DEFAULT_HISTORY_LIMIT = 30
         const val MIN_HISTORY_LIMIT = 20
         const val MAX_HISTORY_LIMIT = 50
     }

@@ -1,5 +1,6 @@
 package com.androidresourcestress
 
+import android.os.PowerManager
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -15,6 +16,18 @@ class Phase4CoreTest {
     }
 
     @Test
+    fun engineeringFormattersUseHonestUnitsAndFallbacks() {
+        assertEquals("42.3 °C", TemperatureFormatter.format(42.34))
+        assertEquals("N/A", TemperatureFormatter.format(null))
+        assertEquals("2.40 GHz", FrequencyFormatter.format(2_400_000_000L))
+        assertEquals("800 MHz", FrequencyFormatter.format(800_000_000L))
+        assertEquals("Unsupported", FrequencyFormatter.format(null))
+        assertEquals("4.080 V", PowerFormatter.voltage(4.08))
+        assertEquals("-4.820 A", PowerFormatter.current(-4.82))
+        assertEquals("19.67 W", PowerFormatter.power(19.67))
+    }
+
+    @Test
     fun presetsNeverEnableStorageByDefault() {
         StressPreset.entries.filter { it != StressPreset.CUSTOM }.forEach { preset ->
             assertFalse(PresetConfigurations.create(preset).storageEnabled)
@@ -23,6 +36,7 @@ class Phase4CoreTest {
         assertEquals(100, extreme.cpuTargetPercent)
         assertEquals(100, extreme.gpuTargetPercent)
         assertEquals(MemoryTarget.AUTO, extreme.memoryTarget)
+        assertEquals(GpuMode.COMPUTE, extreme.gpuMode)
     }
 
     @Test
@@ -47,6 +61,9 @@ class Phase4CoreTest {
         assertEquals(original, restored)
         assertTrue(restored.configuration.storageEnabled)
         assertEquals(StorageMode.MIXED, restored.configuration.storageMode)
+        assertEquals(GpuMode.MIXED, restored.configuration.gpuMode)
+        assertEquals(2, restored.thermalTimeline.size)
+        assertEquals(1, restored.cpuFrequencyObservations.size)
     }
 
     @Test
@@ -60,6 +77,49 @@ class Phase4CoreTest {
         assertFalse(restored.storageEnabled)
         assertEquals(StorageMode.MIXED, restored.storageMode)
         assertEquals(StorageLevel.LOW, restored.storageLevel)
+        assertEquals(GpuMode.COMPUTE, restored.gpuMode)
+    }
+
+    @Test
+    fun thermalPolicyContinuesAtSevereAndStopsAtCritical() {
+        assertFalse(ThermalPolicy.shouldStop(PowerManager.THERMAL_STATUS_SEVERE))
+        assertTrue(ThermalPolicy.shouldStop(PowerManager.THERMAL_STATUS_CRITICAL))
+        assertTrue(ThermalPolicy.shouldStop(PowerManager.THERMAL_STATUS_EMERGENCY))
+        assertTrue(ThermalPolicy.isWarning(PowerManager.THERMAL_STATUS_MODERATE))
+        assertEquals("SEVERE", thermalStatusLabel(PowerManager.THERMAL_STATUS_SEVERE))
+    }
+
+    @Test
+    fun thermalTimelineRecordsChangesAndFindsThresholdTimes() {
+        val none = ThermalEvent(0L, PowerManager.THERMAL_STATUS_NONE, 35.0)
+        val same = ThermalEvent(500L, PowerManager.THERMAL_STATUS_NONE, 35.2)
+        val moderate = ThermalEvent(38_000L, PowerManager.THERMAL_STATUS_MODERATE, 40.0)
+        val severe = ThermalEvent(64_000L, PowerManager.THERMAL_STATUS_SEVERE, 43.0)
+        var events = ThermalTimelineAnalysis.appendIfChanged(emptyList(), none)
+        events = ThermalTimelineAnalysis.appendIfChanged(events, same)
+        events = ThermalTimelineAnalysis.appendIfChanged(events, moderate)
+        events = ThermalTimelineAnalysis.appendIfChanged(events, severe)
+        assertEquals(3, events.size)
+        assertEquals(38_000L, ThermalTimelineAnalysis.timeToStatus(events, PowerManager.THERMAL_STATUS_MODERATE))
+        assertEquals(64_000L, ThermalTimelineAnalysis.timeToStatus(events, PowerManager.THERMAL_STATUS_SEVERE))
+        assertEquals(null, ThermalTimelineAnalysis.timeToStatus(events, PowerManager.THERMAL_STATUS_CRITICAL))
+    }
+
+    @Test
+    fun historyTrimmingKeepsNewestItems() {
+        val newestFirst = (50 downTo 1).toList()
+        assertEquals((50 downTo 31).toList(), HistoryPolicy.trimNewest(newestFirst, 20))
+        assertEquals(30, HistoryPolicy.trimNewest(newestFirst, 30).size)
+        assertEquals(50, HistoryPolicy.trimNewest(newestFirst + 0, 50).size)
+    }
+
+    @Test
+    fun languagePreferenceParsingHasSafeSystemFallback() {
+        assertEquals(AppLanguage.SYSTEM, AppLanguage.parse(null))
+        assertEquals(AppLanguage.SYSTEM, AppLanguage.parse("INVALID"))
+        assertEquals(AppLanguage.SIMPLIFIED_CHINESE, AppLanguage.parse("SIMPLIFIED_CHINESE"))
+        assertEquals("zh-CN", AppLanguage.SIMPLIFIED_CHINESE.languageTag)
+        assertEquals("en", AppLanguage.ENGLISH.languageTag)
     }
 
     private fun sampleSession(): StressSessionSnapshot = StressSessionSnapshot(
@@ -67,7 +127,11 @@ class Phase4CoreTest {
         startWallTimeMs = 123L,
         elapsedTimeMs = 30_000L,
         configuration = PresetConfigurations.create(StressPreset.EXTREME, StressDuration.SECONDS_30)
-            .copy(storageEnabled = true, storageMode = StorageMode.MIXED),
+            .copy(
+                storageEnabled = true,
+                storageMode = StorageMode.MIXED,
+                gpuMode = GpuMode.MIXED,
+            ),
         resolvedMemoryTargetBytes = 512L,
         allocatedMemoryBytes = 500L,
         peakCpuLoadPercent = 91.2,
@@ -87,5 +151,17 @@ class Phase4CoreTest {
         highestThermalStatus = 3,
         stopReason = StopReason.USER,
         lastError = null,
+        thermalTimeline = listOf(
+            ThermalEvent(0L, PowerManager.THERMAL_STATUS_NONE, 41.0),
+            ThermalEvent(20_000L, PowerManager.THERMAL_STATUS_SEVERE, 46.0),
+        ),
+        cpuFrequencyObservations = listOf(
+            CpuFrequencySessionObservation("policy0", 2_000L, 1_000L, 3_000L, 1_500L),
+        ),
+        startPowerObservation = PowerObservation(0L, 90, "CHARGING", 4.0, 1.0, 4.0),
+        endPowerObservation = PowerObservation(30_000L, 91, "CHARGING", 4.1, 1.2, 4.92),
+        peakEstimatedBatteryPowerWatts = 4.92,
+        peakVisualFps = 59.5,
+        averageVisualFrameTimeNanos = 16_800_000.0,
     )
 }
