@@ -367,7 +367,7 @@
     <string name="session_event_timeline_item">%1$s    %2$s    %3$s</string>
     <string name="gpu3d_open">打开 GPU 3D 压力测试</string>
     <string name="gpu3d_title">GPU 3D 压力测试</string>
-    <string name="gpu3d_mode_water_race">模式：水上竞速 · Phase 1</string>
+    <string name="gpu3d_mode_water_race">模式：水上竞速 · Phase 2</string>
     <string name="gpu3d_scene_description">持续循环的 GPU 3D 水上竞速压力场景</string>
     <string name="gpu3d_current_fps">当前 FPS</string>
     <string name="gpu3d_average_fps">平均 FPS</string>
@@ -377,6 +377,16 @@
     <string name="gpu3d_runtime">运行时间</string>
     <string name="gpu3d_resolution_setting">内部渲染分辨率</string>
     <string name="gpu3d_fps_setting">帧率限制</string>
+    <string name="gpu3d_stress_level">GPU 压力等级</string>
+    <string name="gpu3d_level_low">低（Low）</string>
+    <string name="gpu3d_level_medium">中（Medium）</string>
+    <string name="gpu3d_level_high">高（High）</string>
+    <string name="gpu3d_level_extreme">极限（Extreme）</string>
+    <string name="gpu3d_level_max">最大（MAX）</string>
+    <string name="gpu3d_resolution_placeholder">— × —</string>
+    <string name="gpu3d_resolution_value">%1$d × %2$d</string>
+    <string name="gpu3d_fps_limit_value">%1$d FPS</string>
+    <string name="gpu3d_profile_summary">缩放 %1$.2f× · %2$d 个模型 · %3$d 个三角形\n%4$d 个粒子 × %5$d 层 · %6$d 个光源 · %7$d× MSAA\n阴影 %8$d · Shader %9$d · 后处理 %10$d · 反射 %11$d</string>
     <string name="gpu3d_720p">720P · 1280 × 720</string>
     <string name="gpu3d_1080p">1080P · 1920 × 1080</string>
     <string name="gpu3d_30_fps">30 FPS</string>

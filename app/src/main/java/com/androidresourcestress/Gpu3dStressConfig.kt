@@ -1,5 +1,7 @@
 package com.androidresourcestress
 
+import kotlin.math.roundToInt
+
 enum class Gpu3dResolution(
     val width: Int,
     val height: Int,
@@ -13,10 +15,101 @@ enum class Gpu3dFpsLimit(val framesPerSecond: Int) {
     FPS_60(60),
 }
 
+data class Gpu3dStressProfile(
+    val resolution: Gpu3dResolution,
+    val fpsLimit: Gpu3dFpsLimit,
+    val renderScale: Double,
+    val waterColumns: Int,
+    val waterRows: Int,
+    val buoyCount: Int,
+    val obstacleCount: Int,
+    val gateCount: Int,
+    val particleCount: Int,
+    val shadowMapSize: Int,
+    val shadowDistance: Float,
+    val lightCount: Int,
+    val shaderIterations: Int,
+    val msaaSamples: Int,
+    val postProcessQuality: Int,
+    val waterWaveLayers: Int,
+    val reflectionSteps: Int,
+    val overdrawLayers: Int,
+) {
+    val renderWidth: Int = evenDimension(resolution.width, renderScale)
+    val renderHeight: Int = evenDimension(resolution.height, renderScale)
+    val sceneModelCount: Int = buoyCount + obstacleCount + RACER_PARTS + gateCount * GATE_PARTS
+    val triangleCount: Int = waterColumns * waterRows * 2 + sceneModelCount * CUBE_TRIANGLES
+
+    init {
+        require(renderScale > 0.0)
+        require(waterColumns > 0 && waterRows > 0)
+        require(buoyCount > 0 && buoyCount % 2 == 0)
+        require(obstacleCount > 0 && gateCount > 0 && particleCount > 0)
+        require(shadowMapSize > 0 && shadowDistance > 0f)
+        require(lightCount in 1..3)
+        require(shaderIterations in 1..32)
+        require(msaaSamples in setOf(1, 2, 4))
+        require(postProcessQuality in 0..4)
+        require(waterWaveLayers in 1..6)
+        require(reflectionSteps in 0..8)
+        require(overdrawLayers in 1..5)
+    }
+
+    private companion object {
+        const val RACER_PARTS = 8
+        const val GATE_PARTS = 4
+        const val CUBE_TRIANGLES = 12
+
+        fun evenDimension(base: Int, scale: Double): Int =
+            ((base * scale).roundToInt() / 2 * 2).coerceAtLeast(2)
+    }
+}
+
+enum class Gpu3dStressLevel(val profile: Gpu3dStressProfile) {
+    LOW(
+        Gpu3dStressProfile(
+            Gpu3dResolution.P720, Gpu3dFpsLimit.FPS_30, 0.75,
+            72, 48, 16, 6, 1, 96, 512, 24f,
+            1, 4, 1, 0, 2, 1, 1,
+        ),
+    ),
+    MEDIUM(
+        Gpu3dStressProfile(
+            Gpu3dResolution.P720, Gpu3dFpsLimit.FPS_60, 1.0,
+            112, 72, 24, 10, 2, 192, 768, 26f,
+            1, 8, 2, 1, 3, 2, 1,
+        ),
+    ),
+    HIGH(
+        Gpu3dStressProfile(
+            Gpu3dResolution.P1080, Gpu3dFpsLimit.FPS_60, 0.8,
+            160, 104, 36, 16, 3, 320, 1024, 28f,
+            2, 12, 2, 2, 4, 4, 2,
+        ),
+    ),
+    EXTREME(
+        Gpu3dStressProfile(
+            Gpu3dResolution.P1080, Gpu3dFpsLimit.FPS_60, 1.0,
+            192, 128, 48, 24, 4, 512, 1536, 30f,
+            2, 18, 4, 3, 5, 6, 3,
+        ),
+    ),
+    MAX(
+        Gpu3dStressProfile(
+            Gpu3dResolution.P1080, Gpu3dFpsLimit.FPS_60, 4.0 / 3.0,
+            256, 160, 72, 36, 6, 768, 2048, 34f,
+            3, 26, 4, 4, 6, 8, 5,
+        ),
+    ),
+}
+
 data class Gpu3dStressConfiguration(
-    val resolution: Gpu3dResolution = Gpu3dResolution.P720,
-    val fpsLimit: Gpu3dFpsLimit = Gpu3dFpsLimit.FPS_60,
-)
+    val level: Gpu3dStressLevel = Gpu3dStressLevel.MEDIUM,
+) {
+    val profile: Gpu3dStressProfile get() = level.profile
+    val resolution: Gpu3dResolution get() = profile.resolution
+    val fpsLimit: Gpu3dFpsLimit get() = profile.fpsLimit
+}
 
 data class Gpu3dStressMetrics(
     val running: Boolean = false,
@@ -27,8 +120,12 @@ data class Gpu3dStressMetrics(
     val maximumFrameTimeMs: Double = 0.0,
     val runtimeMs: Long = 0L,
     val renderedFrames: Long = 0L,
+    val level: Gpu3dStressLevel = Gpu3dStressLevel.MEDIUM,
     val resolution: Gpu3dResolution = Gpu3dResolution.P720,
     val fpsLimit: Gpu3dFpsLimit = Gpu3dFpsLimit.FPS_60,
+    val renderWidth: Int = 0,
+    val renderHeight: Int = 0,
+    val msaaSamples: Int = 1,
     val lastError: String = "",
 )
 

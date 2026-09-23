@@ -102,27 +102,38 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="4dp"
-                android:text="@string/gpu3d_resolution_setting"
+                android:text="@string/gpu3d_stress_level"
                 android:textColor="@color/text_secondary"
                 android:textSize="12sp" />
 
             <Spinner
-                android:id="@+id/gpu3dResolutionSpinner"
+                android:id="@+id/gpu3dStressLevelSpinner"
                 android:layout_width="match_parent"
                 android:layout_height="36dp" />
 
-            <TextView
+            <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="2dp"
-                android:text="@string/gpu3d_fps_setting"
-                android:textColor="@color/text_secondary"
-                android:textSize="12sp" />
+                android:orientation="horizontal">
+                <TextView style="@style/Gpu3dMetricLabel" android:text="@string/gpu3d_resolution_setting" />
+                <TextView android:id="@+id/gpu3dRenderResolutionValue" style="@style/Gpu3dMetricValue" android:text="@string/gpu3d_resolution_placeholder" />
+            </LinearLayout>
 
-            <Spinner
-                android:id="@+id/gpu3dFpsSpinner"
+            <LinearLayout
                 android:layout_width="match_parent"
-                android:layout_height="36dp" />
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+                <TextView style="@style/Gpu3dMetricLabel" android:text="@string/gpu3d_fps_setting" />
+                <TextView android:id="@+id/gpu3dFpsLimitValue" style="@style/Gpu3dMetricValue" android:text="@string/gpu3d_60_fps" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/gpu3dProfileSummary"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="3dp"
+                android:textColor="@color/text_secondary"
+                android:textSize="11sp" />
 
             <LinearLayout
                 android:layout_width="match_parent"

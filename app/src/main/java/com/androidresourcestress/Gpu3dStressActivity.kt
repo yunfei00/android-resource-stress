@@ -7,6 +7,7 @@ import android.os.Handler
 import android.os.Looper
 import android.view.WindowInsets
 import android.view.WindowManager
+import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.Spinner
@@ -22,8 +23,10 @@ class Gpu3dStressActivity : LocalizedActivity() {
     private lateinit var frameTime: TextView
     private lateinit var maximumFrameTime: TextView
     private lateinit var runtime: TextView
-    private lateinit var resolutionSpinner: Spinner
-    private lateinit var fpsSpinner: Spinner
+    private lateinit var stressLevelSpinner: Spinner
+    private lateinit var renderResolution: TextView
+    private lateinit var fpsLimit: TextView
+    private lateinit var profileSummary: TextView
     private lateinit var startButton: Button
     private lateinit var stopButton: Button
     private val handler = Handler(Looper.getMainLooper())
@@ -79,9 +82,8 @@ class Gpu3dStressActivity : LocalizedActivity() {
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
-        if (::resolutionSpinner.isInitialized) {
-            outState.putInt(STATE_RESOLUTION, resolutionSpinner.selectedItemPosition)
-            outState.putInt(STATE_FPS, fpsSpinner.selectedItemPosition)
+        if (::stressLevelSpinner.isInitialized) {
+            outState.putInt(STATE_LEVEL, stressLevelSpinner.selectedItemPosition)
         }
         super.onSaveInstanceState(outState)
     }
@@ -95,32 +97,37 @@ class Gpu3dStressActivity : LocalizedActivity() {
         frameTime = findViewById(R.id.gpu3dFrameTimeValue)
         maximumFrameTime = findViewById(R.id.gpu3dMaximumFrameTimeValue)
         runtime = findViewById(R.id.gpu3dRuntimeValue)
-        resolutionSpinner = findViewById(R.id.gpu3dResolutionSpinner)
-        fpsSpinner = findViewById(R.id.gpu3dFpsSpinner)
+        stressLevelSpinner = findViewById(R.id.gpu3dStressLevelSpinner)
+        renderResolution = findViewById(R.id.gpu3dRenderResolutionValue)
+        fpsLimit = findViewById(R.id.gpu3dFpsLimitValue)
+        profileSummary = findViewById(R.id.gpu3dProfileSummary)
         startButton = findViewById(R.id.gpu3dStartButton)
         stopButton = findViewById(R.id.gpu3dStopButton)
     }
 
     private fun configureControls(savedInstanceState: Bundle?) {
-        resolutionSpinner.adapter = ArrayAdapter(
+        stressLevelSpinner.adapter = ArrayAdapter(
             this,
             android.R.layout.simple_spinner_item,
-            listOf(getString(R.string.gpu3d_720p), getString(R.string.gpu3d_1080p)),
+            Gpu3dStressLevel.entries.map { getString(it.labelResource()) },
         ).apply { setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
-        fpsSpinner.adapter = ArrayAdapter(
-            this,
-            android.R.layout.simple_spinner_item,
-            listOf(getString(R.string.gpu3d_30_fps), getString(R.string.gpu3d_60_fps)),
-        ).apply { setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
-        resolutionSpinner.setSelection(savedInstanceState?.getInt(STATE_RESOLUTION) ?: 0)
-        fpsSpinner.setSelection(savedInstanceState?.getInt(STATE_FPS) ?: 1)
+        stressLevelSpinner.setSelection(
+            savedInstanceState?.getInt(STATE_LEVEL) ?: Gpu3dStressLevel.MEDIUM.ordinal,
+        )
+        stressLevelSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: AdapterView<*>?, view: android.view.View?, position: Int, id: Long) {
+                renderProfile(Gpu3dStressLevel.entries[position].profile)
+            }
+
+            override fun onNothingSelected(parent: AdapterView<*>?) = Unit
+        }
+        renderProfile(selectedLevel().profile)
     }
 
     private fun startTest() {
         if (!resumed || surface.snapshot().running) return
         val configuration = Gpu3dStressConfiguration(
-            resolution = Gpu3dResolution.entries[resolutionSpinner.selectedItemPosition],
-            fpsLimit = Gpu3dFpsLimit.entries[fpsSpinner.selectedItemPosition],
+            level = selectedLevel(),
         )
         reportedError = ""
         surface.startTest(configuration)
@@ -138,8 +145,7 @@ class Gpu3dStressActivity : LocalizedActivity() {
     }
 
     private fun setControlsRunning(running: Boolean) {
-        resolutionSpinner.isEnabled = !running
-        fpsSpinner.isEnabled = !running
+        stressLevelSpinner.isEnabled = !running
         startButton.isEnabled = !running
         stopButton.isEnabled = running
     }
@@ -173,6 +179,11 @@ class Gpu3dStressActivity : LocalizedActivity() {
             metrics.maximumFrameTimeMs,
         )
         runtime.text = DurationFormatter.format(metrics.runtimeMs)
+        val profile = metrics.level.profile
+        renderProfile(
+            profile,
+            if (metrics.renderedFrames > 0L) metrics.msaaSamples else profile.msaaSamples,
+        )
         if (failed && reportedError != metrics.lastError) {
             reportedError = metrics.lastError
             surface.stopTest()
@@ -186,6 +197,43 @@ class Gpu3dStressActivity : LocalizedActivity() {
         }
     }
 
+    private fun renderProfile(profile: Gpu3dStressProfile, actualMsaaSamples: Int = profile.msaaSamples) {
+        renderResolution.text = getString(
+            R.string.gpu3d_resolution_value,
+            profile.renderWidth,
+            profile.renderHeight,
+        )
+        fpsLimit.text = getString(
+            R.string.gpu3d_fps_limit_value,
+            profile.fpsLimit.framesPerSecond,
+        )
+        profileSummary.text = getString(
+            R.string.gpu3d_profile_summary,
+            profile.renderScale,
+            profile.sceneModelCount,
+            profile.triangleCount,
+            profile.particleCount,
+            profile.overdrawLayers,
+            profile.lightCount,
+            actualMsaaSamples,
+            profile.shadowMapSize,
+            profile.shaderIterations,
+            profile.postProcessQuality,
+            profile.reflectionSteps,
+        )
+    }
+
+    private fun selectedLevel(): Gpu3dStressLevel =
+        Gpu3dStressLevel.entries[stressLevelSpinner.selectedItemPosition.coerceAtLeast(0)]
+
+    private fun Gpu3dStressLevel.labelResource(): Int = when (this) {
+        Gpu3dStressLevel.LOW -> R.string.gpu3d_level_low
+        Gpu3dStressLevel.MEDIUM -> R.string.gpu3d_level_medium
+        Gpu3dStressLevel.HIGH -> R.string.gpu3d_level_high
+        Gpu3dStressLevel.EXTREME -> R.string.gpu3d_level_extreme
+        Gpu3dStressLevel.MAX -> R.string.gpu3d_level_max
+    }
+
     private val metricsRunnable = object : Runnable {
         override fun run() {
             if (!resumed) return
@@ -197,7 +245,6 @@ class Gpu3dStressActivity : LocalizedActivity() {
     private companion object {
         const val REQUIRED_GLES_VERSION = 0x00030000
         const val METRICS_INTERVAL_MS = 500L
-        const val STATE_RESOLUTION = "gpu3d.resolution"
-        const val STATE_FPS = "gpu3d.fps"
+        const val STATE_LEVEL = "gpu3d.level"
     }
 }

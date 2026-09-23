@@ -90,6 +90,7 @@ class Phase4DeviceHarness : Instrumentation(), CombinedStressController.Listener
                 "visualUi" -> exerciseVisualUi()
                 "gpu3dPhase0" -> exerciseGpu3dPhase0()
                 "gpu3dPhase1" -> exerciseGpu3dPhase1()
+                "gpu3dPhase2" -> exerciseGpu3dPhase2()
                 "visualLifecycle" -> exerciseVisualLifecycle()
                 "serviceLifecycle" -> exerciseServiceLifecycle()
                 "notificationStop" -> exerciseNotificationStop()
@@ -418,15 +419,13 @@ class Phase4DeviceHarness : Instrumentation(), CombinedStressController.Listener
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
         ) as Gpu3dStressActivity
         val surface = activity.findViewById<Gpu3dStressSurfaceView>(R.id.gpu3dSurface)
-        val resolution = activity.findViewById<Spinner>(R.id.gpu3dResolutionSpinner)
-        val fps = activity.findViewById<Spinner>(R.id.gpu3dFpsSpinner)
+        val level = activity.findViewById<Spinner>(R.id.gpu3dStressLevelSpinner)
         val start = activity.findViewById<Button>(R.id.gpu3dStartButton)
         val stop = activity.findViewById<Button>(R.id.gpu3dStopButton)
 
-        fun runProfile(resolutionIndex: Int, fpsIndex: Int): Gpu3dStressMetrics {
+        fun runProfile(stressLevel: Gpu3dStressLevel): Gpu3dStressMetrics {
             runOnMainSync {
-                resolution.setSelection(resolutionIndex)
-                fps.setSelection(fpsIndex)
+                level.setSelection(stressLevel.ordinal)
                 start.performClick()
             }
             SystemClock.sleep(argumentLong("runMs", 5_000L))
@@ -441,15 +440,14 @@ class Phase4DeviceHarness : Instrumentation(), CombinedStressController.Listener
         }
 
         return try {
-            val p720 = runProfile(0, 0)
-            val p1080 = runProfile(1, 1)
+            val p720 = runProfile(Gpu3dStressLevel.LOW)
+            val p1080 = runProfile(Gpu3dStressLevel.EXTREME)
             check(p720.resolution == Gpu3dResolution.P720)
             check(p720.fpsLimit == Gpu3dFpsLimit.FPS_30)
             check(p1080.resolution == Gpu3dResolution.P1080)
             check(p1080.fpsLimit == Gpu3dFpsLimit.FPS_60)
             runOnMainSync {
-                resolution.setSelection(0)
-                fps.setSelection(1)
+                level.setSelection(Gpu3dStressLevel.MEDIUM.ordinal)
                 start.performClick()
             }
             SystemClock.sleep(2_500L)
@@ -490,20 +488,19 @@ class Phase4DeviceHarness : Instrumentation(), CombinedStressController.Listener
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
         ) as Gpu3dStressActivity
         val surface = activity.findViewById<Gpu3dStressSurfaceView>(R.id.gpu3dSurface)
-        val resolution = activity.findViewById<Spinner>(R.id.gpu3dResolutionSpinner)
-        val fps = activity.findViewById<Spinner>(R.id.gpu3dFpsSpinner)
+        val levelSpinner = activity.findViewById<Spinner>(R.id.gpu3dStressLevelSpinner)
         val start = activity.findViewById<Button>(R.id.gpu3dStartButton)
         val stop = activity.findViewById<Button>(R.id.gpu3dStopButton)
         val runMs = argumentLong("runMs", 30_000L).coerceAtLeast(3_000L)
-        val resolutionIndex = arguments.getString("resolution", "1080")
-            .let { if (it == "720") 0 else 1 }
-        val fpsIndex = arguments.getString("fps", "60")
-            .let { if (it == "30") 0 else 1 }
+        val level = runCatching {
+            Gpu3dStressLevel.valueOf(
+                arguments.getString("level", "EXTREME")!!.uppercase(Locale.US),
+            )
+        }.getOrDefault(Gpu3dStressLevel.EXTREME)
 
         return try {
             runOnMainSync {
-                resolution.setSelection(resolutionIndex)
-                fps.setSelection(fpsIndex)
+                levelSpinner.setSelection(level.ordinal)
                 start.performClick()
             }
             val deadline = SystemClock.elapsedRealtime() + runMs
@@ -529,7 +526,8 @@ class Phase4DeviceHarness : Instrumentation(), CombinedStressController.Listener
             SystemClock.sleep(800L)
             check(!surface.snapshot().running) { "Phase 1 Water Race did not stop" }
             listOf(
-                "profile=${metrics.resolution.name}/${metrics.fpsLimit.framesPerSecond}",
+                "profile=${metrics.level.name} ${metrics.renderWidth}x${metrics.renderHeight}/" +
+                    "${metrics.fpsLimit.framesPerSecond} MSAA=${metrics.msaaSamples}",
                 "runtimeMs=${metrics.runtimeMs} frames=${metrics.renderedFrames}",
                 "fps current/average/minimum=" +
                     String.format(
@@ -548,6 +546,54 @@ class Phase4DeviceHarness : Instrumentation(), CombinedStressController.Listener
                     ),
                 "waterRace=PASS shadowMap=PASS particles=PASS loopStability=PASS stop=PASS",
             )
+        } finally {
+            runOnMainSync { activity.finish() }
+        }
+    }
+
+    private fun exerciseGpu3dPhase2(): List<String> {
+        val activity = startActivitySync(
+            Intent(targetContext, Gpu3dStressActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+        ) as Gpu3dStressActivity
+        val surface = activity.findViewById<Gpu3dStressSurfaceView>(R.id.gpu3dSurface)
+        val levelSpinner = activity.findViewById<Spinner>(R.id.gpu3dStressLevelSpinner)
+        val start = activity.findViewById<Button>(R.id.gpu3dStartButton)
+        val stop = activity.findViewById<Button>(R.id.gpu3dStopButton)
+        val runMs = argumentLong("runMs", 5_000L).coerceAtLeast(3_000L)
+
+        return try {
+            Gpu3dStressLevel.entries.map { level ->
+                runOnMainSync {
+                    levelSpinner.setSelection(level.ordinal)
+                    start.performClick()
+                }
+                SystemClock.sleep(runMs)
+                val metrics = surface.snapshot()
+                val profile = level.profile
+                check(metrics.running) { "${level.name} stopped: ${metrics.lastError}" }
+                check(metrics.level == level) { "${level.name} reported ${metrics.level.name}" }
+                check(metrics.renderWidth == profile.renderWidth)
+                check(metrics.renderHeight == profile.renderHeight)
+                check(metrics.resolution == profile.resolution)
+                check(metrics.fpsLimit == profile.fpsLimit)
+                check(metrics.renderedFrames > 0L) { "${level.name} rendered no frames" }
+                check(metrics.currentFps > 0.0) { "${level.name} measured no FPS" }
+                check(metrics.msaaSamples in 1..profile.msaaSamples) {
+                    "${level.name} invalid MSAA ${metrics.msaaSamples}"
+                }
+                runOnMainSync { stop.performClick() }
+                SystemClock.sleep(500L)
+                check(!surface.snapshot().running) { "${level.name} did not stop" }
+                "${level.name}: ${metrics.renderWidth}x${metrics.renderHeight} " +
+                    "fps=${String.format(Locale.US, "%.1f", metrics.currentFps)} " +
+                    "frameMs=${String.format(Locale.US, "%.2f", metrics.frameTimeMs)} " +
+                    "models=${profile.sceneModelCount} triangles=${profile.triangleCount} " +
+                    "particles=${profile.particleCount}x${profile.overdrawLayers} " +
+                    "shadow=${profile.shadowMapSize} lights=${profile.lightCount} " +
+                    "shader=${profile.shaderIterations} MSAA=${metrics.msaaSamples} " +
+                    "post=${profile.postProcessQuality} reflection=${profile.reflectionSteps}"
+            }
         } finally {
             runOnMainSync { activity.finish() }
         }

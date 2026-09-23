@@ -14,11 +14,12 @@ class Gpu3dPhase0Test {
         assertEquals(1080, Gpu3dResolution.P1080.height)
         assertEquals(
             Gpu3dStressConfiguration(),
-            Gpu3dStressConfiguration(
-                resolution = Gpu3dResolution.P720,
-                fpsLimit = Gpu3dFpsLimit.FPS_60,
-            ),
+            Gpu3dStressConfiguration(Gpu3dStressLevel.MEDIUM),
         )
+        assertEquals(Gpu3dResolution.P720, Gpu3dStressLevel.LOW.profile.resolution)
+        assertEquals(Gpu3dFpsLimit.FPS_30, Gpu3dStressLevel.LOW.profile.fpsLimit)
+        assertEquals(Gpu3dResolution.P1080, Gpu3dStressLevel.EXTREME.profile.resolution)
+        assertEquals(Gpu3dFpsLimit.FPS_60, Gpu3dStressLevel.EXTREME.profile.fpsLimit)
     }
 
     @Test

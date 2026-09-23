@@ -14,7 +14,7 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 
 /**
- * Phase 1 Water Race renderer. It owns no Activity or View reference, keeping
+ * Phase 2 Water Race renderer. It owns no Activity or View reference, keeping
  * the EGL thread independent from Activity recreation and lifecycle teardown.
  */
 class Gpu3dWaterRenderer : GLSurfaceView.Renderer {
@@ -42,8 +42,10 @@ class Gpu3dWaterRenderer : GLSurfaceView.Renderer {
     private var geometryVertexBuffer = 0
     private var geometryVertexCount = 0
     private var framebuffer = 0
+    private var resolveFramebuffer = 0
     private var colorTexture = 0
     private var depthBuffer = 0
+    private var multisampleColorBuffer = 0
     private var shadowFramebuffer = 0
     private var shadowTexture = 0
     private var shadowDepthBuffer = 0
@@ -59,6 +61,8 @@ class Gpu3dWaterRenderer : GLSurfaceView.Renderer {
     private val lightDirection = FloatArray(3)
     private val frameStatistics = Gpu3dFrameStatistics()
     private var startNanos = 0L
+    private var activeMsaaSamples = 1
+    private var activeShadowMapSize = 1
 
     fun start(configuration: Gpu3dStressConfiguration) {
         requestedConfiguration = configuration
@@ -67,8 +71,12 @@ class Gpu3dWaterRenderer : GLSurfaceView.Renderer {
         running = true
         latestMetrics = Gpu3dStressMetrics(
             running = true,
+            level = configuration.level,
             resolution = configuration.resolution,
             fpsLimit = configuration.fpsLimit,
+            renderWidth = configuration.profile.renderWidth,
+            renderHeight = configuration.profile.renderHeight,
+            msaaSamples = configuration.profile.msaaSamples,
         )
     }
 
@@ -123,8 +131,8 @@ class Gpu3dWaterRenderer : GLSurfaceView.Renderer {
             }
             val now = SystemClock.elapsedRealtimeNanos()
             val elapsedSeconds = (now - startNanos).coerceAtLeast(0L) / 1_000_000_000f
-            updateSceneTransforms(elapsedSeconds, configuration.resolution)
-            renderShadowMap(elapsedSeconds)
+            updateSceneTransforms(elapsedSeconds, configuration.profile)
+            renderShadowMap(elapsedSeconds, configuration.profile)
             renderScene(configuration, elapsedSeconds)
             updateMetrics(now, configuration)
         } catch (error: Throwable) {
@@ -136,20 +144,21 @@ class Gpu3dWaterRenderer : GLSurfaceView.Renderer {
     }
 
     private fun createGlResources(configuration: Gpu3dStressConfiguration) {
+        val profile = configuration.profile
         waterProgram = createProgram(WATER_VERTEX_SHADER, WATER_FRAGMENT_SHADER)
         sceneProgram = createProgram(SCENE_VERTEX_SHADER, SCENE_FRAGMENT_SHADER)
         particleProgram = createProgram(PARTICLE_VERTEX_SHADER, PARTICLE_FRAGMENT_SHADER)
         blitProgram = createProgram(BLIT_VERTEX_SHADER, BLIT_FRAGMENT_SHADER)
-        createWaterMesh()
+        createWaterMesh(profile)
         createGeometryMesh()
-        createFramebuffer(configuration.resolution)
-        createShadowFramebuffer()
-        checkGl("create Phase 1 Water Race resources")
+        createFramebuffer(profile)
+        createShadowFramebuffer(profile.shadowMapSize)
+        checkGl("create Phase 2 Water Race resources")
     }
 
-    private fun createWaterMesh() {
-        val columns = 192
-        val rows = 128
+    private fun createWaterMesh(profile: Gpu3dStressProfile) {
+        val columns = profile.waterColumns
+        val rows = profile.waterRows
         val vertices = FloatArray((columns + 1) * (rows + 1) * 2)
         var vertexOffset = 0
         for (row in 0..rows) {
@@ -211,12 +220,21 @@ class Gpu3dWaterRenderer : GLSurfaceView.Renderer {
         )
     }
 
-    private fun createFramebuffer(resolution: Gpu3dResolution) {
+    private fun createFramebuffer(profile: Gpu3dStressProfile) {
+        val width = profile.renderWidth
+        val height = profile.renderHeight
         val maxTextureSize = IntArray(1)
         GLES30.glGetIntegerv(GLES30.GL_MAX_TEXTURE_SIZE, maxTextureSize, 0)
-        require(resolution.width <= maxTextureSize[0] && resolution.height <= maxTextureSize[0]) {
-            resolution.width.toString() + "x" + resolution.height +
+        require(width <= maxTextureSize[0] && height <= maxTextureSize[0]) {
+            width.toString() + "x" + height +
                 " exceeds GL_MAX_TEXTURE_SIZE=" + maxTextureSize[0]
+        }
+        val maxSamples = IntArray(1)
+        GLES30.glGetIntegerv(GLES30.GL_MAX_SAMPLES, maxSamples, 0)
+        activeMsaaSamples = if (profile.msaaSamples <= 1) {
+            1
+        } else {
+            minOf(profile.msaaSamples, maxSamples[0].coerceAtLeast(1))
         }
         colorTexture = generatedTexture()
         GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, colorTexture)
@@ -228,8 +246,8 @@ class Gpu3dWaterRenderer : GLSurfaceView.Renderer {
             GLES30.GL_TEXTURE_2D,
             0,
             GLES30.GL_RGBA8,
-            resolution.width,
-            resolution.height,
+            width,
+            height,
             0,
             GLES30.GL_RGBA,
             GLES30.GL_UNSIGNED_BYTE,
@@ -237,21 +255,47 @@ class Gpu3dWaterRenderer : GLSurfaceView.Renderer {
         )
         depthBuffer = generatedRenderbuffer()
         GLES30.glBindRenderbuffer(GLES30.GL_RENDERBUFFER, depthBuffer)
-        GLES30.glRenderbufferStorage(
-            GLES30.GL_RENDERBUFFER,
-            GLES30.GL_DEPTH_COMPONENT24,
-            resolution.width,
-            resolution.height,
-        )
         framebuffer = generatedFramebuffer()
         GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, framebuffer)
-        GLES30.glFramebufferTexture2D(
-            GLES30.GL_FRAMEBUFFER,
-            GLES30.GL_COLOR_ATTACHMENT0,
-            GLES30.GL_TEXTURE_2D,
-            colorTexture,
-            0,
-        )
+        if (activeMsaaSamples > 1) {
+            multisampleColorBuffer = generatedRenderbuffer()
+            GLES30.glBindRenderbuffer(GLES30.GL_RENDERBUFFER, multisampleColorBuffer)
+            GLES30.glRenderbufferStorageMultisample(
+                GLES30.GL_RENDERBUFFER,
+                activeMsaaSamples,
+                GLES30.GL_RGBA8,
+                width,
+                height,
+            )
+            GLES30.glFramebufferRenderbuffer(
+                GLES30.GL_FRAMEBUFFER,
+                GLES30.GL_COLOR_ATTACHMENT0,
+                GLES30.GL_RENDERBUFFER,
+                multisampleColorBuffer,
+            )
+            GLES30.glBindRenderbuffer(GLES30.GL_RENDERBUFFER, depthBuffer)
+            GLES30.glRenderbufferStorageMultisample(
+                GLES30.GL_RENDERBUFFER,
+                activeMsaaSamples,
+                GLES30.GL_DEPTH_COMPONENT24,
+                width,
+                height,
+            )
+        } else {
+            GLES30.glRenderbufferStorage(
+                GLES30.GL_RENDERBUFFER,
+                GLES30.GL_DEPTH_COMPONENT24,
+                width,
+                height,
+            )
+            GLES30.glFramebufferTexture2D(
+                GLES30.GL_FRAMEBUFFER,
+                GLES30.GL_COLOR_ATTACHMENT0,
+                GLES30.GL_TEXTURE_2D,
+                colorTexture,
+                0,
+            )
+        }
         GLES30.glFramebufferRenderbuffer(
             GLES30.GL_FRAMEBUFFER,
             GLES30.GL_DEPTH_ATTACHMENT,
@@ -259,7 +303,24 @@ class Gpu3dWaterRenderer : GLSurfaceView.Renderer {
             depthBuffer,
         )
         check(GLES30.glCheckFramebufferStatus(GLES30.GL_FRAMEBUFFER) == GLES30.GL_FRAMEBUFFER_COMPLETE) {
-            "Unable to create " + resolution.width + "x" + resolution.height + " render target"
+            "Unable to create " + width + "x" + height + " render target"
+        }
+        if (activeMsaaSamples > 1) {
+            resolveFramebuffer = generatedFramebuffer()
+            GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, resolveFramebuffer)
+            GLES30.glFramebufferTexture2D(
+                GLES30.GL_FRAMEBUFFER,
+                GLES30.GL_COLOR_ATTACHMENT0,
+                GLES30.GL_TEXTURE_2D,
+                colorTexture,
+                0,
+            )
+            check(
+                GLES30.glCheckFramebufferStatus(GLES30.GL_FRAMEBUFFER) ==
+                    GLES30.GL_FRAMEBUFFER_COMPLETE,
+            ) {
+                "Unable to create multisample resolve target"
+            }
         }
         GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
     }
@@ -269,7 +330,8 @@ class Gpu3dWaterRenderer : GLSurfaceView.Renderer {
      * every OpenGL ES 3.0 device; no optional floating-point extension is
      * required.
      */
-    private fun createShadowFramebuffer() {
+    private fun createShadowFramebuffer(size: Int) {
+        activeShadowMapSize = size
         shadowTexture = generatedTexture()
         GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, shadowTexture)
         GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_NEAREST)
@@ -280,8 +342,8 @@ class Gpu3dWaterRenderer : GLSurfaceView.Renderer {
             GLES30.GL_TEXTURE_2D,
             0,
             GLES30.GL_RGBA8,
-            SHADOW_MAP_SIZE,
-            SHADOW_MAP_SIZE,
+            size,
+            size,
             0,
             GLES30.GL_RGBA,
             GLES30.GL_UNSIGNED_BYTE,
@@ -292,8 +354,8 @@ class Gpu3dWaterRenderer : GLSurfaceView.Renderer {
         GLES30.glRenderbufferStorage(
             GLES30.GL_RENDERBUFFER,
             GLES30.GL_DEPTH_COMPONENT24,
-            SHADOW_MAP_SIZE,
-            SHADOW_MAP_SIZE,
+            size,
+            size,
         )
         shadowFramebuffer = generatedFramebuffer()
         GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, shadowFramebuffer)
@@ -316,7 +378,7 @@ class Gpu3dWaterRenderer : GLSurfaceView.Renderer {
         GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
     }
 
-    private fun updateSceneTransforms(elapsedSeconds: Float, resolution: Gpu3dResolution) {
+    private fun updateSceneTransforms(elapsedSeconds: Float, profile: Gpu3dStressProfile) {
         val raceAngle = elapsedSeconds * TRACK_SPEED
         racerPosition[0] = cos(raceAngle) * TRACK_RADIUS_X
         racerPosition[1] = 0.68f
@@ -350,7 +412,7 @@ class Gpu3dWaterRenderer : GLSurfaceView.Renderer {
             projection,
             0,
             58f,
-            resolution.width.toFloat() / resolution.height,
+            profile.renderWidth.toFloat() / profile.renderHeight,
             0.15f,
             110f,
         )
@@ -379,25 +441,35 @@ class Gpu3dWaterRenderer : GLSurfaceView.Renderer {
             1f,
             0f,
         )
-        Matrix.orthoM(lightProjection, 0, -30f, 30f, -24f, 24f, 1f, 90f)
+        val shadowDistance = profile.shadowDistance
+        Matrix.orthoM(
+            lightProjection,
+            0,
+            -shadowDistance,
+            shadowDistance,
+            -shadowDistance * 0.8f,
+            shadowDistance * 0.8f,
+            1f,
+            90f,
+        )
         Matrix.multiplyMM(lightViewProjection, 0, lightProjection, 0, lightView, 0)
     }
 
-    private fun renderShadowMap(elapsedSeconds: Float) {
+    private fun renderShadowMap(elapsedSeconds: Float, profile: Gpu3dStressProfile) {
         GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, shadowFramebuffer)
-        GLES30.glViewport(0, 0, SHADOW_MAP_SIZE, SHADOW_MAP_SIZE)
+        GLES30.glViewport(0, 0, profile.shadowMapSize, profile.shadowMapSize)
         GLES30.glClearColor(1f, 1f, 1f, 1f)
         GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT or GLES30.GL_DEPTH_BUFFER_BIT)
         GLES30.glEnable(GLES30.GL_DEPTH_TEST)
         GLES30.glEnable(GLES30.GL_CULL_FACE)
         GLES30.glCullFace(GLES30.GL_BACK)
-        drawSceneGeometry(elapsedSeconds, lightViewProjection, true)
+        drawSceneGeometry(elapsedSeconds, lightViewProjection, true, profile)
     }
 
     private fun renderScene(configuration: Gpu3dStressConfiguration, elapsedSeconds: Float) {
-        val resolution = configuration.resolution
+        val profile = configuration.profile
         GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, framebuffer)
-        GLES30.glViewport(0, 0, resolution.width, resolution.height)
+        GLES30.glViewport(0, 0, profile.renderWidth, profile.renderHeight)
         GLES30.glEnable(GLES30.GL_DEPTH_TEST)
         GLES30.glDisable(GLES30.GL_CULL_FACE)
         GLES30.glClearColor(0.018f, 0.09f, 0.19f, 1f)
@@ -410,6 +482,22 @@ class Gpu3dWaterRenderer : GLSurfaceView.Renderer {
         uniform3(waterProgram, "uCamera", cameraPosition)
         uniform3(waterProgram, "uLightDirection", lightDirection)
         uniform3(waterProgram, "uRacerPosition", racerPosition)
+        GLES30.glUniform1i(
+            GLES30.glGetUniformLocation(waterProgram, "uShaderIterations"),
+            profile.shaderIterations,
+        )
+        GLES30.glUniform1i(
+            GLES30.glGetUniformLocation(waterProgram, "uWaterWaveLayers"),
+            profile.waterWaveLayers,
+        )
+        GLES30.glUniform1i(
+            GLES30.glGetUniformLocation(waterProgram, "uReflectionSteps"),
+            profile.reflectionSteps,
+        )
+        GLES30.glUniform1i(
+            GLES30.glGetUniformLocation(waterProgram, "uLightCount"),
+            profile.lightCount,
+        )
         bindShadowTexture(waterProgram)
         GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, waterVertexBuffer)
         GLES30.glEnableVertexAttribArray(0)
@@ -419,16 +507,17 @@ class Gpu3dWaterRenderer : GLSurfaceView.Renderer {
 
         GLES30.glEnable(GLES30.GL_CULL_FACE)
         GLES30.glCullFace(GLES30.GL_BACK)
-        drawSceneGeometry(elapsedSeconds, viewProjection, false)
-        renderSplashParticles(elapsedSeconds)
-        blitToSurface(resolution)
-        checkGl("render Phase 1 Water Race frame")
+        drawSceneGeometry(elapsedSeconds, viewProjection, false, profile)
+        renderSplashParticles(elapsedSeconds, profile)
+        blitToSurface(profile)
+        checkGl("render Phase 2 Water Race frame")
     }
 
     private fun drawSceneGeometry(
         elapsedSeconds: Float,
         activeViewProjection: FloatArray,
         shadowPass: Boolean,
+        profile: Gpu3dStressProfile,
     ) {
         GLES30.glUseProgram(sceneProgram)
         uniformMatrix(sceneProgram, "uViewProjection", activeViewProjection)
@@ -439,19 +528,41 @@ class Gpu3dWaterRenderer : GLSurfaceView.Renderer {
             if (shadowPass) 1 else 0,
         )
         uniform3(sceneProgram, "uLightDirection", lightDirection)
+        GLES30.glUniform1i(
+            GLES30.glGetUniformLocation(sceneProgram, "uLightCount"),
+            profile.lightCount,
+        )
+        GLES30.glUniform1i(
+            GLES30.glGetUniformLocation(sceneProgram, "uBuoysPerSide"),
+            profile.buoyCount / 2,
+        )
+        GLES30.glUniform1i(
+            GLES30.glGetUniformLocation(sceneProgram, "uObstacleCount"),
+            profile.obstacleCount,
+        )
+        GLES30.glUniform1i(
+            GLES30.glGetUniformLocation(sceneProgram, "uGateCount"),
+            profile.gateCount,
+        )
         if (!shadowPass) bindShadowTexture(sceneProgram)
         GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, geometryVertexBuffer)
         GLES30.glEnableVertexAttribArray(0)
         GLES30.glVertexAttribPointer(0, 3, GLES30.GL_FLOAT, false, 6 * Float.SIZE_BYTES, 0)
         GLES30.glEnableVertexAttribArray(1)
         GLES30.glVertexAttribPointer(1, 3, GLES30.GL_FLOAT, false, 6 * Float.SIZE_BYTES, 3 * Float.SIZE_BYTES)
-        SCENE_GROUP_COUNTS.forEachIndexed { group, count ->
+        val groupCounts = intArrayOf(
+            profile.buoyCount,
+            profile.obstacleCount,
+            RACER_PART_COUNT,
+            profile.gateCount * GATE_PART_COUNT,
+        )
+        groupCounts.forEachIndexed { group, count ->
             GLES30.glUniform1i(GLES30.glGetUniformLocation(sceneProgram, "uGroup"), group)
             GLES30.glDrawArraysInstanced(GLES30.GL_TRIANGLES, 0, geometryVertexCount, count)
         }
     }
 
-    private fun renderSplashParticles(elapsedSeconds: Float) {
+    private fun renderSplashParticles(elapsedSeconds: Float, profile: Gpu3dStressProfile) {
         GLES30.glDisable(GLES30.GL_CULL_FACE)
         GLES30.glEnable(GLES30.GL_BLEND)
         GLES30.glBlendFunc(GLES30.GL_SRC_ALPHA, GLES30.GL_ONE_MINUS_SRC_ALPHA)
@@ -459,18 +570,44 @@ class Gpu3dWaterRenderer : GLSurfaceView.Renderer {
         GLES30.glUseProgram(particleProgram)
         uniformMatrix(particleProgram, "uViewProjection", viewProjection)
         GLES30.glUniform1f(GLES30.glGetUniformLocation(particleProgram, "uTime"), elapsedSeconds)
-        GLES30.glDrawArrays(GLES30.GL_POINTS, 0, SPLASH_PARTICLE_COUNT)
+        GLES30.glUniform1f(
+            GLES30.glGetUniformLocation(particleProgram, "uParticleCount"),
+            profile.particleCount.toFloat(),
+        )
+        repeat(profile.overdrawLayers) { layer ->
+            GLES30.glUniform1f(
+                GLES30.glGetUniformLocation(particleProgram, "uLayer"),
+                layer.toFloat(),
+            )
+            GLES30.glDrawArrays(GLES30.GL_POINTS, 0, profile.particleCount)
+        }
         GLES30.glDepthMask(true)
         GLES30.glDisable(GLES30.GL_BLEND)
     }
 
-    private fun blitToSurface(resolution: Gpu3dResolution) {
+    private fun blitToSurface(profile: Gpu3dStressProfile) {
+        if (activeMsaaSamples > 1) {
+            GLES30.glBindFramebuffer(GLES30.GL_READ_FRAMEBUFFER, framebuffer)
+            GLES30.glBindFramebuffer(GLES30.GL_DRAW_FRAMEBUFFER, resolveFramebuffer)
+            GLES30.glBlitFramebuffer(
+                0,
+                0,
+                profile.renderWidth,
+                profile.renderHeight,
+                0,
+                0,
+                profile.renderWidth,
+                profile.renderHeight,
+                GLES30.GL_COLOR_BUFFER_BIT,
+                GLES30.GL_NEAREST,
+            )
+        }
         GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
         GLES30.glDisable(GLES30.GL_DEPTH_TEST)
         GLES30.glViewport(0, 0, surfaceWidth, surfaceHeight)
         GLES30.glClearColor(0f, 0f, 0f, 1f)
         GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
-        val sourceAspect = resolution.width.toFloat() / resolution.height
+        val sourceAspect = profile.renderWidth.toFloat() / profile.renderHeight
         val surfaceAspect = surfaceWidth.toFloat() / surfaceHeight
         val viewportWidth: Int
         val viewportHeight: Int
@@ -491,6 +628,15 @@ class Gpu3dWaterRenderer : GLSurfaceView.Renderer {
         GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
         GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, colorTexture)
         GLES30.glUniform1i(GLES30.glGetUniformLocation(blitProgram, "uTexture"), 0)
+        GLES30.glUniform1i(
+            GLES30.glGetUniformLocation(blitProgram, "uPostProcessQuality"),
+            profile.postProcessQuality,
+        )
+        GLES30.glUniform2f(
+            GLES30.glGetUniformLocation(blitProgram, "uSourceTexel"),
+            1f / profile.renderWidth,
+            1f / profile.renderHeight,
+        )
         GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, 3)
     }
 
@@ -500,8 +646,8 @@ class Gpu3dWaterRenderer : GLSurfaceView.Renderer {
         GLES30.glUniform1i(GLES30.glGetUniformLocation(program, "uShadowMap"), 1)
         GLES30.glUniform2f(
             GLES30.glGetUniformLocation(program, "uShadowTexel"),
-            1f / SHADOW_MAP_SIZE,
-            1f / SHADOW_MAP_SIZE,
+            1f / activeShadowMapSize,
+            1f / activeShadowMapSize,
         )
     }
 
@@ -516,8 +662,12 @@ class Gpu3dWaterRenderer : GLSurfaceView.Renderer {
             maximumFrameTimeMs = statistics.maximumFrameTimeMs,
             runtimeMs = (now - startNanos).coerceAtLeast(0L) / 1_000_000L,
             renderedFrames = statistics.renderedFrames,
+            level = configuration.level,
             resolution = configuration.resolution,
             fpsLimit = configuration.fpsLimit,
+            renderWidth = configuration.profile.renderWidth,
+            renderHeight = configuration.profile.renderHeight,
+            msaaSamples = activeMsaaSamples,
         )
     }
 
@@ -534,11 +684,19 @@ class Gpu3dWaterRenderer : GLSurfaceView.Renderer {
             .forEach(GLES30::glDeleteProgram)
         val textures = intArrayOf(colorTexture, shadowTexture).filter { it != 0 }.toIntArray()
         if (textures.isNotEmpty()) GLES30.glDeleteTextures(textures.size, textures, 0)
-        val renderbuffers = intArrayOf(depthBuffer, shadowDepthBuffer).filter { it != 0 }.toIntArray()
+        val renderbuffers = intArrayOf(
+            depthBuffer,
+            multisampleColorBuffer,
+            shadowDepthBuffer,
+        ).filter { it != 0 }.toIntArray()
         if (renderbuffers.isNotEmpty()) {
             GLES30.glDeleteRenderbuffers(renderbuffers.size, renderbuffers, 0)
         }
-        val framebuffers = intArrayOf(framebuffer, shadowFramebuffer).filter { it != 0 }.toIntArray()
+        val framebuffers = intArrayOf(
+            framebuffer,
+            resolveFramebuffer,
+            shadowFramebuffer,
+        ).filter { it != 0 }.toIntArray()
         if (framebuffers.isNotEmpty()) {
             GLES30.glDeleteFramebuffers(framebuffers.size, framebuffers, 0)
         }
@@ -554,11 +712,15 @@ class Gpu3dWaterRenderer : GLSurfaceView.Renderer {
         waterIndexBuffer = 0
         geometryVertexBuffer = 0
         framebuffer = 0
+        resolveFramebuffer = 0
         colorTexture = 0
         depthBuffer = 0
+        multisampleColorBuffer = 0
         shadowFramebuffer = 0
         shadowTexture = 0
         shadowDepthBuffer = 0
+        activeMsaaSamples = 1
+        activeShadowMapSize = 1
         resourcesReady = false
         activeConfiguration = null
     }
@@ -671,9 +833,8 @@ class Gpu3dWaterRenderer : GLSurfaceView.Renderer {
         const val TRACK_RADIUS_X = 15.5f
         const val TRACK_RADIUS_Z = 9.5f
         const val TRACK_SPEED = 0.23f
-        const val SHADOW_MAP_SIZE = 1024
-        const val SPLASH_PARTICLE_COUNT = 384
-        val SCENE_GROUP_COUNTS = intArrayOf(48, 18, 8, 12)
+        const val RACER_PART_COUNT = 8
+        const val GATE_PART_COUNT = 4
 
         const val SHADOW_GLSL = """
 float unpackDepth(vec4 packedDepth) {
@@ -723,13 +884,17 @@ uniform vec3 uLightDirection;
 uniform vec3 uRacerPosition;
 uniform sampler2D uShadowMap;
 uniform vec2 uShadowTexel;
+uniform int uShaderIterations;
+uniform int uReflectionSteps;
+uniform int uLightCount;
 out vec4 outputColor;
 $SHADOW_GLSL
 
 void main() {
     vec3 normal = vNormal;
     float detail = 0.0;
-    for (int i = 0; i < 16; ++i) {
+    for (int i = 0; i < 32; ++i) {
+        if (i >= uShaderIterations) break;
         float fi = float(i);
         float phase = vWorldPosition.x * (0.21 + fi * 0.031)
             + vWorldPosition.z * (0.17 + fi * 0.026)
@@ -751,13 +916,29 @@ void main() {
     float wakeDistance = length(vWorldPosition.xz - uRacerPosition.xz);
     float wakeFoam = (1.0 - smoothstep(0.5, 3.8, wakeDistance)) *
         (0.55 + 0.45 * sin(wakeDistance * 8.0 - uTime * 7.0));
+    float extraLighting = 0.0;
+    if (uLightCount > 1) {
+        extraLighting += max(dot(normal, normalize(vec3(-0.68, 0.48, -0.32))), 0.0) * 0.18;
+    }
+    if (uLightCount > 2) {
+        extraLighting += max(dot(normal, normalize(vec3(0.55, 0.38, -0.74))), 0.0) * 0.13;
+    }
+    float reflectionDetail = 0.0;
+    for (int i = 0; i < 8; ++i) {
+        if (i >= uReflectionSteps) break;
+        float fi = float(i) + 1.0;
+        reflectionDetail += sin(
+            dot(vWorldPosition.xz, vec2(0.11 * fi, 0.073 * fi)) + uTime * 0.17 * fi
+        ) / fi;
+    }
     float shadow = sampleShadow(uShadowMap, uShadowTexel, vShadowPosition, 0.0035);
-    float illumination = diffuse * mix(1.0, 0.42, shadow);
+    float illumination = (diffuse + extraLighting) * mix(1.0, 0.42, shadow);
     vec3 deep = vec3(0.004, 0.055, 0.17);
     vec3 shallow = vec3(0.01, 0.45, 0.61);
     vec3 color = mix(deep, shallow, illumination * 0.72 + 0.17);
     color += vec3(0.30, 0.68, 0.96) * fresnel * 0.62;
     color += vec3(1.0, 0.88, 0.60) * specular * (1.0 - shadow) * 1.5;
+    color += vec3(0.18, 0.42, 0.72) * reflectionDetail * 0.045;
     color += vec3(0.62, 0.88, 0.96) *
         (crestFoam * 0.16 + laneFoam + wakeFoam * 0.24);
     outputColor = vec4(color, 1.0);
@@ -769,22 +950,29 @@ layout(location = 0) in vec2 aPosition;
 uniform mat4 uViewProjection;
 uniform mat4 uLightViewProjection;
 uniform float uTime;
+uniform int uWaterWaveLayers;
 out highp vec3 vWorldPosition;
 out highp vec3 vNormal;
 out highp vec4 vShadowPosition;
 
 void main() {
-    float waveA = sin(aPosition.x * 0.69 + uTime * 1.43) * 0.29;
-    float waveB = cos(aPosition.y * 0.87 - uTime * 1.09) * 0.22;
-    float waveC = sin((aPosition.x + aPosition.y) * 0.43 + uTime * 0.81) * 0.16;
-    float waveD = cos((aPosition.x - aPosition.y) * 1.27 - uTime * 1.72) * 0.07;
-    float height = waveA + waveB + waveC + waveD;
-    float dx = cos(aPosition.x * 0.69 + uTime * 1.43) * 0.2001
-        + cos((aPosition.x + aPosition.y) * 0.43 + uTime * 0.81) * 0.0688
-        - sin((aPosition.x - aPosition.y) * 1.27 - uTime * 1.72) * 0.0889;
-    float dz = -sin(aPosition.y * 0.87 - uTime * 1.09) * 0.1914
-        + cos((aPosition.x + aPosition.y) * 0.43 + uTime * 0.81) * 0.0688
-        + sin((aPosition.x - aPosition.y) * 1.27 - uTime * 1.72) * 0.0889;
+    float height = 0.0;
+    float dx = 0.0;
+    float dz = 0.0;
+    for (int i = 0; i < 6; ++i) {
+        if (i >= uWaterWaveLayers) break;
+        float fi = float(i);
+        float frequencyX = 0.47 + fi * 0.19;
+        float frequencyZ = 0.39 + fi * 0.14;
+        float amplitude = 0.34 / (1.0 + fi * 0.56);
+        float direction = mod(fi, 2.0) < 1.0 ? 1.0 : -1.0;
+        float phase = aPosition.x * frequencyX +
+            aPosition.y * frequencyZ * direction +
+            uTime * (1.31 + fi * 0.22) * direction;
+        height += sin(phase) * amplitude;
+        dx += cos(phase) * amplitude * frequencyX;
+        dz += cos(phase) * amplitude * frequencyZ * direction;
+    }
     vWorldPosition = vec3(aPosition.x, height, aPosition.y);
     vNormal = normalize(vec3(-dx, 1.0, -dz));
     vShadowPosition = uLightViewProjection * vec4(vWorldPosition, 1.0);
@@ -799,6 +987,9 @@ uniform mat4 uViewProjection;
 uniform mat4 uLightViewProjection;
 uniform float uTime;
 uniform int uGroup;
+uniform int uBuoysPerSide;
+uniform int uObstacleCount;
+uniform int uGateCount;
 out highp vec3 vNormal;
 out highp vec3 vColor;
 out highp vec4 vShadowPosition;
@@ -827,9 +1018,10 @@ void main() {
     vec3 color = vec3(0.8);
 
     if (uGroup == 0) {
-        int side = id / 24;
-        int index = id - side * 24;
-        float angle = float(index) / 24.0 * TAU;
+        int perSide = max(uBuoysPerSide, 1);
+        int side = id / perSide;
+        int index = id - side * perSide;
+        float angle = float(index) / float(perSide) * TAU;
         vec2 radii = side == 0 ? vec2(12.1, 6.2) : vec2(19.0, 13.0);
         center = vec3(cos(angle) * radii.x, 0.58, sin(angle) * radii.y);
         center.y += sin(uTime * 1.8 + float(id) * 0.71) * 0.12;
@@ -837,7 +1029,7 @@ void main() {
         forward = trackForward(angle);
         color = side == 0 ? vec3(1.0, 0.22, 0.04) : vec3(1.0, 0.76, 0.08);
     } else if (uGroup == 1) {
-        float angle = float(id) / 18.0 * TAU + 0.26;
+        float angle = float(id) / float(max(uObstacleCount, 1)) * TAU + 0.26;
         forward = trackForward(angle);
         vec2 right = vec2(forward.y, -forward.x);
         float lane = float(id % 3 - 1) * 1.55;
@@ -887,7 +1079,7 @@ void main() {
     } else {
         int gate = id / 4;
         int component = id - gate * 4;
-        float angle = float(gate) / 3.0 * TAU + 0.52;
+        float angle = float(gate) / float(max(uGateCount, 1)) * TAU + 0.52;
         forward = trackForward(angle);
         vec2 track = trackPosition(angle);
         center = vec3(track.x, 0.0, track.y);
@@ -931,6 +1123,7 @@ uniform vec3 uLightDirection;
 uniform sampler2D uShadowMap;
 uniform vec2 uShadowTexel;
 uniform int uShadowPass;
+uniform int uLightCount;
 out vec4 outputColor;
 $SHADOW_GLSL
 
@@ -949,6 +1142,12 @@ void main() {
     }
     vec3 normal = normalize(vNormal);
     float diffuse = max(dot(normal, uLightDirection), 0.0);
+    if (uLightCount > 1) {
+        diffuse += max(dot(normal, normalize(vec3(-0.68, 0.48, -0.32))), 0.0) * 0.18;
+    }
+    if (uLightCount > 2) {
+        diffuse += max(dot(normal, normalize(vec3(0.55, 0.38, -0.74))), 0.0) * 0.13;
+    }
     float shadow = sampleShadow(uShadowMap, uShadowTexel, vShadowPosition, 0.0045);
     float lighting = 0.22 + diffuse * mix(0.78, 0.28, shadow);
     float rim = pow(1.0 - abs(normal.y), 2.0) * 0.16;
@@ -959,6 +1158,8 @@ void main() {
         const val PARTICLE_VERTEX_SHADER = """#version 300 es
 uniform mat4 uViewProjection;
 uniform float uTime;
+uniform float uParticleCount;
+uniform float uLayer;
 out highp float vAlpha;
 out highp vec3 vColor;
 
@@ -968,7 +1169,7 @@ float hash(float value) {
 
 void main() {
     float id = float(gl_VertexID);
-    float age = fract(uTime * 0.74 + id / 384.0);
+    float age = fract(uTime * 0.74 + id / max(uParticleCount, 1.0) + uLayer * 0.137);
     float angle = uTime * 0.23 - age * 0.38;
     vec2 center = vec2(cos(angle) * 15.5, sin(angle) * 9.5);
     vec2 forward = normalize(vec2(-sin(angle) * 15.5, cos(angle) * 9.5));
@@ -976,12 +1177,12 @@ void main() {
     float randomA = hash(id + 3.1) * 2.0 - 1.0;
     float randomB = hash(id + 17.7);
     vec2 position = center - forward * age * (2.2 + randomB * 2.4);
-    position += right * randomA * (0.25 + age * 1.55);
+    position += right * (randomA * (0.25 + age * 1.55) + (uLayer - 2.0) * 0.08);
     float height = 0.42 + sin(age * 3.14159265) * (1.2 + randomB * 1.4);
     height -= age * age * 0.65;
     gl_Position = uViewProjection * vec4(position.x, height, position.y, 1.0);
     gl_PointSize = mix(10.0, 2.2, age);
-    vAlpha = (1.0 - age) * (0.48 + randomB * 0.50);
+    vAlpha = (1.0 - age) * (0.48 + randomB * 0.50) / (1.0 + uLayer * 0.22);
     vColor = mix(vec3(0.36, 0.78, 1.0), vec3(0.92, 0.98, 1.0), randomB);
 }
 """
@@ -1013,9 +1214,27 @@ void main() {
 precision mediump float;
 in highp vec2 vUv;
 uniform sampler2D uTexture;
+uniform vec2 uSourceTexel;
+uniform int uPostProcessQuality;
 out vec4 outputColor;
 void main() {
-    outputColor = texture(uTexture, vUv);
+    vec3 color = texture(uTexture, vUv).rgb;
+    vec3 neighborhood = color;
+    float samples = 1.0;
+    for (int i = 0; i < 4; ++i) {
+        if (i >= uPostProcessQuality) break;
+        float radius = float(i + 1) * 1.6;
+        vec2 offset = uSourceTexel * radius;
+        neighborhood += texture(uTexture, vUv + vec2(offset.x, 0.0)).rgb;
+        neighborhood += texture(uTexture, vUv - vec2(offset.x, 0.0)).rgb;
+        neighborhood += texture(uTexture, vUv + vec2(0.0, offset.y)).rgb;
+        neighborhood += texture(uTexture, vUv - vec2(0.0, offset.y)).rgb;
+        samples += 4.0;
+    }
+    vec3 bloom = max(neighborhood / samples - vec3(0.52), vec3(0.0));
+    color += bloom * float(uPostProcessQuality) * 0.16;
+    color = (color - 0.5) * (1.0 + float(uPostProcessQuality) * 0.035) + 0.5;
+    outputColor = vec4(color, 1.0);
 }
 """
     }
