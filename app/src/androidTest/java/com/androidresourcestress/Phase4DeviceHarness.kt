@@ -19,6 +19,7 @@ import android.os.SystemClock
 import android.widget.Button
 import android.widget.CheckBox
 import android.widget.RadioGroup
+import android.widget.Spinner
 import org.json.JSONObject
 import java.io.File
 import java.util.Locale
@@ -87,6 +88,7 @@ class Phase4DeviceHarness : Instrumentation(), CombinedStressController.Listener
                 "localizationUi" -> exerciseLocalizationUi()
                 "hardware" -> exerciseHardwareMonitor()
                 "visualUi" -> exerciseVisualUi()
+                "gpu3dPhase0" -> exerciseGpu3dPhase0()
                 "visualLifecycle" -> exerciseVisualLifecycle()
                 "serviceLifecycle" -> exerciseServiceLifecycle()
                 "notificationStop" -> exerciseNotificationStop()
@@ -405,6 +407,78 @@ class Phase4DeviceHarness : Instrumentation(), CombinedStressController.Listener
             )
         } finally {
             StressForegroundService.stop(targetContext)
+            runOnMainSync { activity.finish() }
+        }
+    }
+
+    private fun exerciseGpu3dPhase0(): List<String> {
+        val activity = startActivitySync(
+            Intent(targetContext, Gpu3dStressActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+        ) as Gpu3dStressActivity
+        val surface = activity.findViewById<Gpu3dStressSurfaceView>(R.id.gpu3dSurface)
+        val resolution = activity.findViewById<Spinner>(R.id.gpu3dResolutionSpinner)
+        val fps = activity.findViewById<Spinner>(R.id.gpu3dFpsSpinner)
+        val start = activity.findViewById<Button>(R.id.gpu3dStartButton)
+        val stop = activity.findViewById<Button>(R.id.gpu3dStopButton)
+
+        fun runProfile(resolutionIndex: Int, fpsIndex: Int): Gpu3dStressMetrics {
+            runOnMainSync {
+                resolution.setSelection(resolutionIndex)
+                fps.setSelection(fpsIndex)
+                start.performClick()
+            }
+            SystemClock.sleep(argumentLong("runMs", 5_000L))
+            val metrics = surface.snapshot()
+            check(metrics.running) { "GPU 3D renderer is not running: ${metrics.lastError}" }
+            check(metrics.renderedFrames > 0L) { "GPU 3D renderer produced no frames" }
+            check(metrics.currentFps > 0.0) { "GPU 3D renderer did not measure FPS" }
+            runOnMainSync { stop.performClick() }
+            SystemClock.sleep(800L)
+            check(!surface.snapshot().running) { "GPU 3D renderer did not stop" }
+            return metrics
+        }
+
+        return try {
+            val p720 = runProfile(0, 0)
+            val p1080 = runProfile(1, 1)
+            check(p720.resolution == Gpu3dResolution.P720)
+            check(p720.fpsLimit == Gpu3dFpsLimit.FPS_30)
+            check(p1080.resolution == Gpu3dResolution.P1080)
+            check(p1080.fpsLimit == Gpu3dFpsLimit.FPS_60)
+            runOnMainSync {
+                resolution.setSelection(0)
+                fps.setSelection(1)
+                start.performClick()
+            }
+            SystemClock.sleep(2_500L)
+            check(surface.snapshot().running)
+            runOnMainSync { activity.moveTaskToBack(true) }
+            SystemClock.sleep(1_500L)
+            check(!surface.snapshot().running) { "GPU 3D renderer survived Activity onStop" }
+            targetContext.startActivity(
+                Intent(targetContext, Gpu3dStressActivity::class.java).addFlags(
+                    Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT,
+                ),
+            )
+            SystemClock.sleep(1_500L)
+            check(!surface.snapshot().running) { "GPU 3D renderer restarted without user action" }
+            runOnMainSync { start.performClick() }
+            SystemClock.sleep(2_500L)
+            val resumed = surface.snapshot()
+            check(resumed.running && resumed.renderedFrames > 0L) {
+                "GPU 3D renderer could not restart after Activity resume: ${resumed.lastError}"
+            }
+            runOnMainSync { stop.performClick() }
+            listOf(
+                "720P/30 frames=${p720.renderedFrames} fps=" +
+                    String.format(Locale.US, "%.1f", p720.currentFps),
+                "1080P/60 frames=${p1080.renderedFrames} fps=" +
+                    String.format(Locale.US, "%.1f", p1080.currentFps),
+                "waterAnimation=PASS autoCamera=PASS startStopRestart=PASS",
+                "onPauseRelease=PASS resumeIdle=PASS resumeRestart=PASS",
+            )
+        } finally {
             runOnMainSync { activity.finish() }
         }
     }

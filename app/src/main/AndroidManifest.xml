@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
@@ -13,6 +14,9 @@
         android:name="android.hardware.vulkan.version"
         android:required="false"
         android:version="0x00400000" />
+    <uses-feature
+        android:glEsVersion="0x00030000"
+        android:required="false" />
 
     <application
         android:allowBackup="true"
@@ -40,6 +44,11 @@
         <activity android:name=".DeviceInfoActivity" android:exported="false" />
         <activity android:name=".SettingsActivity" android:exported="false" />
         <activity android:name=".MonitorActivity" android:exported="false" />
+        <activity
+            android:name=".Gpu3dStressActivity"
+            android:exported="false"
+            android:screenOrientation="landscape"
+            tools:ignore="DiscouragedApi" />
         <activity
             android:name=".GpuVisualActivity"
             android:exported="false"

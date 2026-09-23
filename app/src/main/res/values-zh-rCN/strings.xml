@@ -365,4 +365,24 @@
     <string name="failed">失败</string>
     <string name="session_event_timeline_title">SESSION 事件时间线</string>
     <string name="session_event_timeline_item">%1$s    %2$s    %3$s</string>
+    <string name="gpu3d_open">打开 GPU 3D 压力测试</string>
+    <string name="gpu3d_title">GPU 3D 压力测试</string>
+    <string name="gpu3d_mode_water_shader">模式：动态水面 Shader · Phase 0</string>
+    <string name="gpu3d_scene_description">实时 GPU 3D 动态水面压力场景</string>
+    <string name="gpu3d_current_fps">当前 FPS</string>
+    <string name="gpu3d_frame_time">Frame Time</string>
+    <string name="gpu3d_runtime">运行时间</string>
+    <string name="gpu3d_resolution_setting">内部渲染分辨率</string>
+    <string name="gpu3d_fps_setting">帧率限制</string>
+    <string name="gpu3d_720p">720P · 1280 × 720</string>
+    <string name="gpu3d_1080p">1080P · 1920 × 1080</string>
+    <string name="gpu3d_30_fps">30 FPS</string>
+    <string name="gpu3d_60_fps">60 FPS</string>
+    <string name="gpu3d_current_fps_value">%1$.1f</string>
+    <string name="gpu3d_frame_time_value">%1$.2f ms</string>
+    <string name="gpu3d_zero_fps">0.0</string>
+    <string name="gpu3d_zero_frame_time">0.00 ms</string>
+    <string name="gpu3d_start">启动 GPU 3D</string>
+    <string name="gpu3d_es3_unsupported">当前设备不支持 OpenGL ES 3.0。</string>
+    <string name="gpu3d_renderer_error">GPU 3D Renderer 错误：%1$s</string>
 </resources>

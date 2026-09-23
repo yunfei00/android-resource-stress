@@ -326,7 +326,19 @@ class MainActivity : LocalizedActivity(), StressForegroundService.Observer {
             listOf(25 to R.string.load_25, 50 to R.string.load_50, 75 to R.string.load_75, 100 to R.string.load_100),
             configuration.gpuTargetPercent,
         )
-        showConfigDialog(R.string.resource_gpu, enabled, labeledGroup(R.string.gpu_mode, mode), target) {
+        val gpu3dPrototype = Button(this).apply {
+            setText(R.string.gpu3d_open)
+            setOnClickListener {
+                startActivity(Intent(this@MainActivity, Gpu3dStressActivity::class.java))
+            }
+        }
+        showConfigDialog(
+            R.string.resource_gpu,
+            enabled,
+            labeledGroup(R.string.gpu_mode, mode),
+            target,
+            gpu3dPrototype,
+        ) {
             configuration = configuration.copy(
                 preset = StressPreset.CUSTOM,
                 gpuEnabled = enabled.isChecked,

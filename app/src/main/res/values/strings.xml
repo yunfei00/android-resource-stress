@@ -366,4 +366,24 @@
     <string name="failed">Failed</string>
     <string name="session_event_timeline_title">SESSION EVENT TIMELINE</string>
     <string name="session_event_timeline_item">%1$s    %2$s    %3$s</string>
+    <string name="gpu3d_open">Open GPU 3D Stress</string>
+    <string name="gpu3d_title">GPU 3D Stress</string>
+    <string name="gpu3d_mode_water_shader">Mode: Water Shader Demo · Phase 0</string>
+    <string name="gpu3d_scene_description">Real-time GPU 3D water stress scene</string>
+    <string name="gpu3d_current_fps">Current FPS</string>
+    <string name="gpu3d_frame_time">Frame time</string>
+    <string name="gpu3d_runtime">Runtime</string>
+    <string name="gpu3d_resolution_setting">Internal rendering resolution</string>
+    <string name="gpu3d_fps_setting">Frame-rate limit</string>
+    <string name="gpu3d_720p">720P · 1280 × 720</string>
+    <string name="gpu3d_1080p">1080P · 1920 × 1080</string>
+    <string name="gpu3d_30_fps">30 FPS</string>
+    <string name="gpu3d_60_fps">60 FPS</string>
+    <string name="gpu3d_current_fps_value">%1$.1f</string>
+    <string name="gpu3d_frame_time_value">%1$.2f ms</string>
+    <string name="gpu3d_zero_fps">0.0</string>
+    <string name="gpu3d_zero_frame_time">0.00 ms</string>
+    <string name="gpu3d_start">Start GPU 3D</string>
+    <string name="gpu3d_es3_unsupported">OpenGL ES 3.0 is not available on this device.</string>
+    <string name="gpu3d_renderer_error">GPU 3D renderer error: %1$s</string>
 </resources>
