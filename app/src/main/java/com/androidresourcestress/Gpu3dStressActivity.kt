@@ -17,7 +17,10 @@ class Gpu3dStressActivity : LocalizedActivity() {
     private lateinit var surface: Gpu3dStressSurfaceView
     private lateinit var status: TextView
     private lateinit var currentFps: TextView
+    private lateinit var averageFps: TextView
+    private lateinit var minimumFps: TextView
     private lateinit var frameTime: TextView
+    private lateinit var maximumFrameTime: TextView
     private lateinit var runtime: TextView
     private lateinit var resolutionSpinner: Spinner
     private lateinit var fpsSpinner: Spinner
@@ -87,7 +90,10 @@ class Gpu3dStressActivity : LocalizedActivity() {
         surface = findViewById(R.id.gpu3dSurface)
         status = findViewById(R.id.gpu3dStatusValue)
         currentFps = findViewById(R.id.gpu3dCurrentFpsValue)
+        averageFps = findViewById(R.id.gpu3dAverageFpsValue)
+        minimumFps = findViewById(R.id.gpu3dMinimumFpsValue)
         frameTime = findViewById(R.id.gpu3dFrameTimeValue)
+        maximumFrameTime = findViewById(R.id.gpu3dMaximumFrameTimeValue)
         runtime = findViewById(R.id.gpu3dRuntimeValue)
         resolutionSpinner = findViewById(R.id.gpu3dResolutionSpinner)
         fpsSpinner = findViewById(R.id.gpu3dFpsSpinner)
@@ -155,7 +161,17 @@ class Gpu3dStressActivity : LocalizedActivity() {
             ),
         )
         currentFps.text = getString(R.string.gpu3d_current_fps_value, metrics.currentFps)
+        averageFps.text = getString(R.string.gpu3d_current_fps_value, metrics.averageFps)
+        minimumFps.text = if (metrics.minimumFps > 0.0) {
+            getString(R.string.gpu3d_current_fps_value, metrics.minimumFps)
+        } else {
+            getString(R.string.not_available)
+        }
         frameTime.text = getString(R.string.gpu3d_frame_time_value, metrics.frameTimeMs)
+        maximumFrameTime.text = getString(
+            R.string.gpu3d_frame_time_value,
+            metrics.maximumFrameTimeMs,
+        )
         runtime.text = DurationFormatter.format(metrics.runtimeMs)
         if (failed && reportedError != metrics.lastError) {
             reportedError = metrics.lastError

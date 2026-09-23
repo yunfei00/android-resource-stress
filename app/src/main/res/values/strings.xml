@@ -368,10 +368,13 @@
     <string name="session_event_timeline_item">%1$s    %2$s    %3$s</string>
     <string name="gpu3d_open">Open GPU 3D Stress</string>
     <string name="gpu3d_title">GPU 3D Stress</string>
-    <string name="gpu3d_mode_water_shader">Mode: Water Shader Demo · Phase 0</string>
-    <string name="gpu3d_scene_description">Real-time GPU 3D water stress scene</string>
+    <string name="gpu3d_mode_water_race">Mode: Water Race · Phase 1</string>
+    <string name="gpu3d_scene_description">Continuous GPU 3D water race stress scene</string>
     <string name="gpu3d_current_fps">Current FPS</string>
+    <string name="gpu3d_average_fps">Average FPS</string>
+    <string name="gpu3d_minimum_fps">Minimum FPS</string>
     <string name="gpu3d_frame_time">Frame time</string>
+    <string name="gpu3d_maximum_frame_time">Maximum frame time</string>
     <string name="gpu3d_runtime">Runtime</string>
     <string name="gpu3d_resolution_setting">Internal rendering resolution</string>
     <string name="gpu3d_fps_setting">Frame-rate limit</string>

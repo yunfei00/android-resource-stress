@@ -37,7 +37,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="2dp"
-                android:text="@string/gpu3d_mode_water_shader"
+                android:text="@string/gpu3d_mode_water_race"
                 android:textColor="@color/text_secondary"
                 android:textSize="12sp" />
 
@@ -62,8 +62,32 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="horizontal">
+                <TextView style="@style/Gpu3dMetricLabel" android:text="@string/gpu3d_average_fps" />
+                <TextView android:id="@+id/gpu3dAverageFpsValue" style="@style/Gpu3dMetricValue" android:text="@string/gpu3d_zero_fps" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+                <TextView style="@style/Gpu3dMetricLabel" android:text="@string/gpu3d_minimum_fps" />
+                <TextView android:id="@+id/gpu3dMinimumFpsValue" style="@style/Gpu3dMetricValue" android:text="@string/not_available" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
                 <TextView style="@style/Gpu3dMetricLabel" android:text="@string/gpu3d_frame_time" />
                 <TextView android:id="@+id/gpu3dFrameTimeValue" style="@style/Gpu3dMetricValue" android:text="@string/gpu3d_zero_frame_time" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+                <TextView style="@style/Gpu3dMetricLabel" android:text="@string/gpu3d_maximum_frame_time" />
+                <TextView android:id="@+id/gpu3dMaximumFrameTimeValue" style="@style/Gpu3dMetricValue" android:text="@string/gpu3d_zero_frame_time" />
             </LinearLayout>
 
             <LinearLayout

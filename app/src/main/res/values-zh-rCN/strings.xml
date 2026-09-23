@@ -367,10 +367,13 @@
     <string name="session_event_timeline_item">%1$s    %2$s    %3$s</string>
     <string name="gpu3d_open">打开 GPU 3D 压力测试</string>
     <string name="gpu3d_title">GPU 3D 压力测试</string>
-    <string name="gpu3d_mode_water_shader">模式：动态水面 Shader · Phase 0</string>
-    <string name="gpu3d_scene_description">实时 GPU 3D 动态水面压力场景</string>
+    <string name="gpu3d_mode_water_race">模式：水上竞速 · Phase 1</string>
+    <string name="gpu3d_scene_description">持续循环的 GPU 3D 水上竞速压力场景</string>
     <string name="gpu3d_current_fps">当前 FPS</string>
+    <string name="gpu3d_average_fps">平均 FPS</string>
+    <string name="gpu3d_minimum_fps">最低 FPS</string>
     <string name="gpu3d_frame_time">Frame Time</string>
+    <string name="gpu3d_maximum_frame_time">最大 Frame Time</string>
     <string name="gpu3d_runtime">运行时间</string>
     <string name="gpu3d_resolution_setting">内部渲染分辨率</string>
     <string name="gpu3d_fps_setting">帧率限制</string>

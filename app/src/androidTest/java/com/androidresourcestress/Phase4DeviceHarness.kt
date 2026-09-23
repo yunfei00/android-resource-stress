@@ -89,6 +89,7 @@ class Phase4DeviceHarness : Instrumentation(), CombinedStressController.Listener
                 "hardware" -> exerciseHardwareMonitor()
                 "visualUi" -> exerciseVisualUi()
                 "gpu3dPhase0" -> exerciseGpu3dPhase0()
+                "gpu3dPhase1" -> exerciseGpu3dPhase1()
                 "visualLifecycle" -> exerciseVisualLifecycle()
                 "serviceLifecycle" -> exerciseServiceLifecycle()
                 "notificationStop" -> exerciseNotificationStop()
@@ -477,6 +478,75 @@ class Phase4DeviceHarness : Instrumentation(), CombinedStressController.Listener
                     String.format(Locale.US, "%.1f", p1080.currentFps),
                 "waterAnimation=PASS autoCamera=PASS startStopRestart=PASS",
                 "onPauseRelease=PASS resumeIdle=PASS resumeRestart=PASS",
+            )
+        } finally {
+            runOnMainSync { activity.finish() }
+        }
+    }
+
+    private fun exerciseGpu3dPhase1(): List<String> {
+        val activity = startActivitySync(
+            Intent(targetContext, Gpu3dStressActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+        ) as Gpu3dStressActivity
+        val surface = activity.findViewById<Gpu3dStressSurfaceView>(R.id.gpu3dSurface)
+        val resolution = activity.findViewById<Spinner>(R.id.gpu3dResolutionSpinner)
+        val fps = activity.findViewById<Spinner>(R.id.gpu3dFpsSpinner)
+        val start = activity.findViewById<Button>(R.id.gpu3dStartButton)
+        val stop = activity.findViewById<Button>(R.id.gpu3dStopButton)
+        val runMs = argumentLong("runMs", 30_000L).coerceAtLeast(3_000L)
+        val resolutionIndex = arguments.getString("resolution", "1080")
+            .let { if (it == "720") 0 else 1 }
+        val fpsIndex = arguments.getString("fps", "60")
+            .let { if (it == "30") 0 else 1 }
+
+        return try {
+            runOnMainSync {
+                resolution.setSelection(resolutionIndex)
+                fps.setSelection(fpsIndex)
+                start.performClick()
+            }
+            val deadline = SystemClock.elapsedRealtime() + runMs
+            while (SystemClock.elapsedRealtime() < deadline) {
+                SystemClock.sleep(
+                    (deadline - SystemClock.elapsedRealtime()).coerceIn(1L, 10_000L),
+                )
+                val sample = surface.snapshot()
+                check(sample.running) {
+                    "Phase 1 Water Race stopped before the stability interval: ${sample.lastError}"
+                }
+                check(sample.renderedFrames > 0L) { "Phase 1 Water Race produced no frames" }
+            }
+            val metrics = surface.snapshot()
+            check(metrics.currentFps > 0.0) { "Current FPS was not measured" }
+            check(metrics.averageFps > 0.0) { "Average FPS was not measured" }
+            check(metrics.minimumFps > 0.0) { "Minimum FPS was not measured" }
+            check(metrics.frameTimeMs > 0.0) { "Frame time was not measured" }
+            check(metrics.maximumFrameTimeMs >= metrics.frameTimeMs) {
+                "Maximum frame time is smaller than the current smoothed frame time"
+            }
+            runOnMainSync { stop.performClick() }
+            SystemClock.sleep(800L)
+            check(!surface.snapshot().running) { "Phase 1 Water Race did not stop" }
+            listOf(
+                "profile=${metrics.resolution.name}/${metrics.fpsLimit.framesPerSecond}",
+                "runtimeMs=${metrics.runtimeMs} frames=${metrics.renderedFrames}",
+                "fps current/average/minimum=" +
+                    String.format(
+                        Locale.US,
+                        "%.1f/%.1f/%.1f",
+                        metrics.currentFps,
+                        metrics.averageFps,
+                        metrics.minimumFps,
+                    ),
+                "frameMs current/maximum=" +
+                    String.format(
+                        Locale.US,
+                        "%.2f/%.2f",
+                        metrics.frameTimeMs,
+                        metrics.maximumFrameTimeMs,
+                    ),
+                "waterRace=PASS shadowMap=PASS particles=PASS loopStability=PASS stop=PASS",
             )
         } finally {
             runOnMainSync { activity.finish() }
