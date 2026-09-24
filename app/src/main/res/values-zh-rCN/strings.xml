@@ -367,7 +367,7 @@
     <string name="session_event_timeline_item">%1$s    %2$s    %3$s</string>
     <string name="gpu3d_open">打开 GPU 3D 压力测试</string>
     <string name="gpu3d_title">GPU 3D 压力测试</string>
-    <string name="gpu3d_mode_water_race">多场景 GPU 负载 · Phase 3</string>
+    <string name="gpu3d_mode_water_race">多场景 GPU 负载 · Phase 4</string>
     <string name="gpu3d_scene_description">持续循环的多场景 GPU 3D 压力渲染</string>
     <string name="gpu3d_current_fps">当前 FPS</string>
     <string name="gpu3d_average_fps">平均 FPS</string>
@@ -404,4 +404,24 @@
     <string name="gpu3d_start">启动 GPU 3D</string>
     <string name="gpu3d_es3_unsupported">当前设备不支持 OpenGL ES 3.0。</string>
     <string name="gpu3d_renderer_error">GPU 3D Renderer 错误：%1$s</string>
+    <string name="gpu3d_auto_traverse">自动遍历</string>
+    <string name="gpu3d_traversal_levels">等级 · Low 到 MAX</string>
+    <string name="gpu3d_traversal_scenes">场景 · 水上竞速到过度绘制</string>
+    <string name="gpu3d_auto_step_duration">每步时长</string>
+    <string name="gpu3d_auto_10s">10 秒</string>
+    <string name="gpu3d_auto_20s">20 秒</string>
+    <string name="gpu3d_auto_30s">30 秒</string>
+    <string name="gpu3d_auto_60s">60 秒</string>
+    <string name="gpu3d_auto_custom">自定义</string>
+    <string name="gpu3d_auto_custom_hint">自定义秒数（1–3600）</string>
+    <string name="gpu3d_auto_start">开始自动遍历</string>
+    <string name="gpu3d_auto_invalid_duration">请输入 1 到 3600 秒的自定义时长。</string>
+    <string name="gpu3d_auto_idle">自动测试未运行。</string>
+    <string name="gpu3d_auto_no_results">暂无自动测试结果。</string>
+    <string name="gpu3d_auto_stopped">自动测试已停止。</string>
+    <string name="gpu3d_auto_error">Renderer 报错，自动测试已停止。</string>
+    <string name="gpu3d_auto_complete">自动遍历已完成。</string>
+    <string name="gpu3d_auto_progress">步骤 %1$d/%2$d · %3$s · %4$s · %5$d/%6$d 秒</string>
+    <string name="gpu3d_auto_results_title">自动测试结果</string>
+    <string name="gpu3d_auto_result_item">%1$s–%2$s · %3$s / %4$s\n%5$.1f 秒 · 平均 %6$.1f FPS · 最低 %7$.1f FPS · 最大 %8$.2f ms · 平均帧 %9$.2f ms</string>
 </resources>

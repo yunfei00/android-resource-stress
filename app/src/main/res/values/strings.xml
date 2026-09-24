@@ -368,7 +368,7 @@
     <string name="session_event_timeline_item">%1$s    %2$s    %3$s</string>
     <string name="gpu3d_open">Open GPU 3D Stress</string>
     <string name="gpu3d_title">GPU 3D Stress</string>
-    <string name="gpu3d_mode_water_race">Multi-scene GPU workload · Phase 3</string>
+    <string name="gpu3d_mode_water_race">Multi-scene GPU workload · Phase 4</string>
     <string name="gpu3d_scene_description">Continuous multi-scene GPU 3D stress rendering</string>
     <string name="gpu3d_current_fps">Current FPS</string>
     <string name="gpu3d_average_fps">Average FPS</string>
@@ -405,4 +405,24 @@
     <string name="gpu3d_start">Start GPU 3D</string>
     <string name="gpu3d_es3_unsupported">OpenGL ES 3.0 is not available on this device.</string>
     <string name="gpu3d_renderer_error">GPU 3D renderer error: %1$s</string>
+    <string name="gpu3d_auto_traverse">Automatic traversal</string>
+    <string name="gpu3d_traversal_levels">Levels · Low to MAX</string>
+    <string name="gpu3d_traversal_scenes">Scenes · Water Race to Overdraw</string>
+    <string name="gpu3d_auto_step_duration">Duration per step</string>
+    <string name="gpu3d_auto_10s">10 seconds</string>
+    <string name="gpu3d_auto_20s">20 seconds</string>
+    <string name="gpu3d_auto_30s">30 seconds</string>
+    <string name="gpu3d_auto_60s">60 seconds</string>
+    <string name="gpu3d_auto_custom">Custom</string>
+    <string name="gpu3d_auto_custom_hint">Custom seconds (1–3600)</string>
+    <string name="gpu3d_auto_start">Start automatic traversal</string>
+    <string name="gpu3d_auto_invalid_duration">Enter a custom duration from 1 to 3600 seconds.</string>
+    <string name="gpu3d_auto_idle">Automatic test is idle.</string>
+    <string name="gpu3d_auto_no_results">No automatic test results yet.</string>
+    <string name="gpu3d_auto_stopped">Automatic test stopped.</string>
+    <string name="gpu3d_auto_error">Automatic test stopped because the renderer reported an error.</string>
+    <string name="gpu3d_auto_complete">Automatic traversal completed.</string>
+    <string name="gpu3d_auto_progress">Step %1$d/%2$d · %3$s · %4$s · %5$d/%6$d s</string>
+    <string name="gpu3d_auto_results_title">AUTOMATIC TEST RESULTS</string>
+    <string name="gpu3d_auto_result_item">%1$s–%2$s · %3$s / %4$s\n%5$.1f s · avg %6$.1f FPS · min %7$.1f FPS · max %8$.2f ms · avg frame %9$.2f ms</string>
 </resources>

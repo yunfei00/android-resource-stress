@@ -18,8 +18,10 @@ import android.os.PowerManager
 import android.os.SystemClock
 import android.widget.Button
 import android.widget.CheckBox
+import android.widget.EditText
 import android.widget.RadioGroup
 import android.widget.Spinner
+import android.widget.TextView
 import org.json.JSONObject
 import java.io.File
 import java.util.Locale
@@ -92,6 +94,7 @@ class Phase4DeviceHarness : Instrumentation(), CombinedStressController.Listener
                 "gpu3dPhase1" -> exerciseGpu3dPhase1()
                 "gpu3dPhase2" -> exerciseGpu3dPhase2()
                 "gpu3dPhase3" -> exerciseGpu3dPhase3()
+                "gpu3dPhase4" -> exerciseGpu3dPhase4()
                 "visualLifecycle" -> exerciseVisualLifecycle()
                 "serviceLifecycle" -> exerciseServiceLifecycle()
                 "notificationStop" -> exerciseNotificationStop()
@@ -658,6 +661,102 @@ class Phase4DeviceHarness : Instrumentation(), CombinedStressController.Listener
         } finally {
             runOnMainSync { activity.finish() }
         }
+    }
+
+    private fun exerciseGpu3dPhase4(): List<String> {
+        val activity = startActivitySync(
+            Intent(targetContext, Gpu3dStressActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+        ) as Gpu3dStressActivity
+        val surface = activity.findViewById<Gpu3dStressSurfaceView>(R.id.gpu3dSurface)
+        val sceneSpinner = activity.findViewById<Spinner>(R.id.gpu3dSceneSpinner)
+        val levelSpinner = activity.findViewById<Spinner>(R.id.gpu3dStressLevelSpinner)
+        val traversalSpinner = activity.findViewById<Spinner>(R.id.gpu3dTraversalModeSpinner)
+        val durationSpinner = activity.findViewById<Spinner>(R.id.gpu3dAutoDurationSpinner)
+        val customDuration = activity.findViewById<EditText>(R.id.gpu3dCustomDuration)
+        val autoStart = activity.findViewById<Button>(R.id.gpu3dAutoStartButton)
+        val autoStatus = activity.findViewById<TextView>(R.id.gpu3dAutoStatus)
+        val autoResults = activity.findViewById<TextView>(R.id.gpu3dAutoResults)
+        val stepSeconds = argumentInt("stepSeconds", 2).coerceIn(2, 60)
+
+        fun runTraversal(
+            mode: Gpu3dTraversalMode,
+            selectedLevel: Gpu3dStressLevel,
+            selectedScene: Gpu3dStressScene,
+        ): String {
+            runOnMainSync {
+                levelSpinner.setSelection(selectedLevel.ordinal)
+                sceneSpinner.setSelection(selectedScene.ordinal)
+                traversalSpinner.setSelection(mode.ordinal)
+                durationSpinner.setSelection(Gpu3dAutoDuration.CUSTOM.ordinal)
+                customDuration.setText(stepSeconds.toString())
+                autoStart.performClick()
+            }
+            check(!autoStart.isEnabled) { "$mode automatic traversal did not start" }
+            val expectedSteps = when (mode) {
+                Gpu3dTraversalMode.LEVELS -> Gpu3dStressLevel.entries.size
+                Gpu3dTraversalMode.SCENES -> Gpu3dStressScene.entries.size
+            }
+            val deadline = SystemClock.elapsedRealtime() +
+                expectedSteps * stepSeconds * 1_000L + 20_000L
+            while (!autoStart.isEnabled && SystemClock.elapsedRealtime() < deadline) {
+                SystemClock.sleep(250L)
+            }
+            check(autoStart.isEnabled) { "$mode automatic traversal timed out" }
+            check(!surface.snapshot().running) { "$mode renderer remained active after completion" }
+            val expectedStatus = activity.getString(R.string.gpu3d_auto_complete)
+            check(autoStatus.text.toString() == expectedStatus) {
+                "$mode did not complete: ${autoStatus.text}"
+            }
+            val results = autoResults.text.toString()
+            when (mode) {
+                Gpu3dTraversalMode.LEVELS -> Gpu3dStressLevel.entries.forEach { level ->
+                    check(results.contains(activity.getString(level.labelResourceForHarness()))) {
+                        "$mode result omitted ${level.name}: $results"
+                    }
+                }
+                Gpu3dTraversalMode.SCENES -> Gpu3dStressScene.entries.forEach { scene ->
+                    check(results.contains(activity.getString(scene.labelResourceForHarness()))) {
+                        "$mode result omitted ${scene.name}: $results"
+                    }
+                }
+            }
+            return "$mode steps=$expectedSteps duration=${stepSeconds}s results=PASS"
+        }
+
+        return try {
+            listOf(
+                runTraversal(
+                    Gpu3dTraversalMode.LEVELS,
+                    Gpu3dStressLevel.MEDIUM,
+                    Gpu3dStressScene.WATER_RACE,
+                ),
+                runTraversal(
+                    Gpu3dTraversalMode.SCENES,
+                    Gpu3dStressLevel.HIGH,
+                    Gpu3dStressScene.WATER_RACE,
+                ),
+                "automaticTraversal=PASS timing=PASS frameStatistics=PASS cleanup=PASS",
+            )
+        } finally {
+            runOnMainSync { activity.finish() }
+        }
+    }
+
+    private fun Gpu3dStressLevel.labelResourceForHarness(): Int = when (this) {
+        Gpu3dStressLevel.LOW -> R.string.gpu3d_level_low
+        Gpu3dStressLevel.MEDIUM -> R.string.gpu3d_level_medium
+        Gpu3dStressLevel.HIGH -> R.string.gpu3d_level_high
+        Gpu3dStressLevel.EXTREME -> R.string.gpu3d_level_extreme
+        Gpu3dStressLevel.MAX -> R.string.gpu3d_level_max
+    }
+
+    private fun Gpu3dStressScene.labelResourceForHarness(): Int = when (this) {
+        Gpu3dStressScene.WATER_RACE -> R.string.gpu3d_scene_water_race
+        Gpu3dStressScene.PARTICLE_STORM -> R.string.gpu3d_scene_particle_storm
+        Gpu3dStressScene.SHADER_STRESS -> R.string.gpu3d_scene_shader_stress
+        Gpu3dStressScene.GEOMETRY_STRESS -> R.string.gpu3d_scene_geometry_stress
+        Gpu3dStressScene.OVERDRAW_STRESS -> R.string.gpu3d_scene_overdraw_stress
     }
 
     private fun exerciseVisualLifecycle(): List<String> {

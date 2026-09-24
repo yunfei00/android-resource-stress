@@ -148,6 +148,86 @@
                 android:textColor="@color/text_secondary"
                 android:textSize="11sp" />
 
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="@string/gpu3d_auto_traverse"
+                android:textColor="@color/text_secondary"
+                android:textSize="12sp" />
+
+            <Spinner
+                android:id="@+id/gpu3dTraversalModeSpinner"
+                android:layout_width="match_parent"
+                android:layout_height="36dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="@string/gpu3d_auto_step_duration"
+                android:textColor="@color/text_secondary"
+                android:textSize="12sp" />
+
+            <Spinner
+                android:id="@+id/gpu3dAutoDurationSpinner"
+                android:layout_width="match_parent"
+                android:layout_height="36dp" />
+
+            <EditText
+                android:id="@+id/gpu3dCustomDuration"
+                android:layout_width="match_parent"
+                android:layout_height="40dp"
+                android:enabled="false"
+                android:hint="@string/gpu3d_auto_custom_hint"
+                android:importantForAutofill="no"
+                android:inputType="number"
+                android:maxLength="4"
+                android:paddingStart="8dp"
+                android:paddingEnd="8dp"
+                android:textColor="@color/text_primary"
+                android:textColorHint="@color/text_secondary"
+                android:textSize="13sp" />
+
+            <Button
+                android:id="@+id/gpu3dAutoStartButton"
+                android:layout_width="match_parent"
+                android:layout_height="44dp"
+                android:layout_marginTop="5dp"
+                android:background="@drawable/button_primary"
+                android:text="@string/gpu3d_auto_start"
+                android:textColor="@color/text_primary"
+                android:textStyle="bold"
+                tools:ignore="ButtonStyle" />
+
+            <TextView
+                android:id="@+id/gpu3dAutoStatus"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="@string/gpu3d_auto_idle"
+                android:textColor="@color/text_secondary"
+                android:textSize="11sp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:text="@string/gpu3d_auto_results_title"
+                android:textColor="@color/text_primary"
+                android:textSize="12sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/gpu3dAutoResults"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:text="@string/gpu3d_auto_no_results"
+                android:textColor="@color/text_secondary"
+                android:textIsSelectable="true"
+                android:textSize="11sp" />
+
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="46dp"
