@@ -6,7 +6,7 @@ import org.json.JSONObject
 import java.io.File
 
 object SessionJsonCodec {
-    const val SCHEMA_VERSION = 3
+    const val SCHEMA_VERSION = 4
 
     fun toJson(session: StressSessionSnapshot): JSONObject = JSONObject().apply {
         put("schemaVersion", SCHEMA_VERSION)
@@ -61,7 +61,9 @@ object SessionJsonCodec {
         putNullable("endPowerObservation", session.endPowerObservation?.let(::powerToJson))
         putNullable("peakEstimatedBatteryPowerWatts", session.peakEstimatedBatteryPowerWatts)
         put("peakVisualFps", session.peakVisualFps)
+        put("minimumVisualFps", session.minimumVisualFps)
         put("averageVisualFrameTimeNanos", session.averageVisualFrameTimeNanos)
+        put("maximumVisualFrameTimeNanos", session.maximumVisualFrameTimeNanos)
         put("screenMode", session.screenMode.name)
         putNullable("screenOffAtElapsedMs", session.screenOffAtElapsedMs)
         putNullable("screenOnAtElapsedMs", session.screenOnAtElapsedMs)
@@ -131,7 +133,12 @@ object SessionJsonCodec {
             peakEstimatedBatteryPowerWatts =
                 json.optionalDouble("peakEstimatedBatteryPowerWatts"),
             peakVisualFps = json.optDouble("peakVisualFps", 0.0),
+            minimumVisualFps = json.optDouble("minimumVisualFps", 0.0),
             averageVisualFrameTimeNanos = json.optDouble("averageVisualFrameTimeNanos", 0.0),
+            maximumVisualFrameTimeNanos = json.optDouble(
+                "maximumVisualFrameTimeNanos",
+                0.0,
+            ),
             screenMode = json.enumValue("screenMode", configuration.screenMode, ScreenMode::valueOf),
             screenOffAtElapsedMs = json.optionalLong("screenOffAtElapsedMs"),
             screenOnAtElapsedMs = json.optionalLong("screenOnAtElapsedMs"),
@@ -160,6 +167,9 @@ object SessionJsonCodec {
             put("gpuMode", configuration.gpuMode.name)
             put("duration", configuration.duration.name)
             put("screenMode", configuration.screenMode.name)
+            put("gpu3dLevel", configuration.gpu3dLevel.name)
+            put("gpu3dRunMode", configuration.gpu3dRunMode.name)
+            put("gpu3dStepDurationSeconds", configuration.gpu3dStepDurationSeconds)
         }
 
     fun configurationFromJson(json: JSONObject?): CombinedStressConfiguration {
@@ -200,6 +210,18 @@ object SessionJsonCodec {
                 StressDuration::valueOf,
             ),
             screenMode = json.enumValue("screenMode", ScreenMode.ON, ScreenMode::valueOf),
+            gpu3dLevel = json.enumValue(
+                "gpu3dLevel",
+                Gpu3dStressLevel.MEDIUM,
+                Gpu3dStressLevel::valueOf,
+            ),
+            gpu3dRunMode = json.enumValue(
+                "gpu3dRunMode",
+                Gpu3dRunMode.FIXED,
+                Gpu3dRunMode::valueOf,
+            ),
+            gpu3dStepDurationSeconds = json.optInt("gpu3dStepDurationSeconds", 20)
+                .coerceIn(Gpu3dAutoDuration.MIN_SECONDS, Gpu3dAutoDuration.MAX_SECONDS),
         )
     }
 

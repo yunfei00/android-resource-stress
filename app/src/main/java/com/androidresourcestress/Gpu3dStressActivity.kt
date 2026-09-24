@@ -1,9 +1,13 @@
 package com.androidresourcestress
 
 import android.app.ActivityManager
+import android.content.ComponentName
 import android.content.Context
+import android.content.Intent
+import android.content.ServiceConnection
 import android.os.Bundle
 import android.os.Handler
+import android.os.IBinder
 import android.os.Looper
 import android.text.format.DateFormat
 import android.view.WindowInsets
@@ -16,7 +20,7 @@ import android.widget.Spinner
 import android.widget.TextView
 import android.widget.Toast
 
-class Gpu3dStressActivity : LocalizedActivity() {
+class Gpu3dStressActivity : LocalizedActivity(), StressForegroundService.Observer {
     private lateinit var surface: Gpu3dStressSurfaceView
     private lateinit var status: TextView
     private lateinit var currentFps: TextView
@@ -45,6 +49,28 @@ class Gpu3dStressActivity : LocalizedActivity() {
     private var autoStepIndex = 0
     private var autoStepStartedWallMs = 0L
     private val autoResults = mutableListOf<Gpu3dAutoTestStepResult>()
+    private var serviceSessionMode = false
+    private var service: StressForegroundService? = null
+    private var serviceBound = false
+    private var serviceSurfaceReported = false
+    private var serviceSessionId: Long? = null
+    private var serviceConfiguration: CombinedStressConfiguration? = null
+    private var servicePlan: List<Gpu3dStressConfiguration> = emptyList()
+    private var serviceStepIndex = 0
+    private var reportedServiceError: String? = null
+
+    private val serviceConnection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
+            service = (binder as? StressForegroundService.LocalBinder)?.service
+            serviceBound = service != null
+            service?.addObserver(this@Gpu3dStressActivity)
+        }
+
+        override fun onServiceDisconnected(name: ComponentName?) {
+            service = null
+            serviceBound = false
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -54,17 +80,25 @@ class Gpu3dStressActivity : LocalizedActivity() {
             finish()
             return
         }
+        serviceSessionMode = intent.getBooleanExtra(EXTRA_SERVICE_SESSION, false)
         setContentView(R.layout.activity_gpu3d_stress)
         if (android.os.Build.VERSION.SDK_INT >= 30) {
             window.insetsController?.hide(WindowInsets.Type.statusBars())
         }
         bindViews()
         configureControls(savedInstanceState)
-        startButton.setOnClickListener { startTest() }
-        autoStartButton.setOnClickListener { startAutoTest() }
-        stopButton.setOnClickListener { stopTest() }
+        startButton.setOnClickListener { if (!serviceSessionMode) startTest() }
+        autoStartButton.setOnClickListener { if (!serviceSessionMode) startAutoTest() }
+        stopButton.setOnClickListener {
+            if (serviceSessionMode) {
+                service?.stopSession(StopReason.USER_STOP) ?: StressForegroundService.stop(this)
+            } else {
+                stopTest()
+            }
+        }
         renderMetrics(surface.snapshot())
         renderAutoResults()
+        if (serviceSessionMode) setServiceControlsWaiting()
     }
 
     override fun onResume() {
@@ -72,21 +106,41 @@ class Gpu3dStressActivity : LocalizedActivity() {
         if (!::surface.isInitialized) return
         resumed = true
         surface.onResume()
+        if (serviceSessionMode && serviceConfiguration != null && !surface.snapshot().running) {
+            startServiceStep(resetPlan = false)
+        }
         handler.post(metricsRunnable)
+    }
+
+    override fun onStart() {
+        super.onStart()
+        if (serviceSessionMode) {
+            serviceBound = bindService(
+                Intent(this, StressForegroundService::class.java),
+                serviceConnection,
+                Context.BIND_AUTO_CREATE,
+            )
+        }
     }
 
     override fun onPause() {
         resumed = false
         handler.removeCallbacksAndMessages(null)
         if (::surface.isInitialized) {
-            stopTest()
+            if (serviceSessionMode) stopServiceSurface() else stopTest()
             surface.onPause()
         }
         super.onPause()
     }
 
     override fun onStop() {
-        if (::surface.isInitialized) stopTest()
+        if (!serviceSessionMode && ::surface.isInitialized) stopTest()
+        if (serviceSessionMode) {
+            service?.removeObserver(this)
+            if (serviceBound) unbindService(serviceConnection)
+            serviceBound = false
+            service = null
+        }
         super.onStop()
     }
 
@@ -195,6 +249,120 @@ class Gpu3dStressActivity : LocalizedActivity() {
         renderProfile(selectedConfiguration().workload)
     }
 
+    override fun onStressSnapshot(snapshot: CombinedRuntimeSnapshot) {
+        if (!serviceSessionMode) return
+        val session = snapshot.currentSession
+        val configuration = session?.configuration?.takeIf {
+            it.gpuEnabled && it.gpuMode.usesGpu3d
+        }
+        if (session == null || configuration == null) return
+        val newSession = serviceSessionId != session.sessionId
+        if (newSession) {
+            serviceSessionId = session.sessionId
+            serviceConfiguration = configuration
+            servicePlan = Gpu3dIntegratedPlan.create(configuration)
+            serviceStepIndex = 0
+            autoResults.clear()
+            renderAutoResults()
+            reportedServiceError = null
+        }
+        if (snapshot.state == CombinedStressState.RUNNING && resumed &&
+            (newSession || !surface.snapshot().running)
+        ) {
+            startServiceStep(resetPlan = newSession)
+        }
+    }
+
+    override fun onStressStateChanged(state: CombinedStressState) {
+        if (!serviceSessionMode) return
+        if (state == CombinedStressState.IDLE && serviceSessionId == null) {
+            setServiceControlsWaiting()
+        }
+    }
+
+    override fun onSessionFinished(session: StressSessionSnapshot) {
+        if (serviceSessionMode) finish()
+    }
+
+    override fun onStressError(message: String) {
+        if (!serviceSessionMode || reportedServiceError == message) return
+        reportedServiceError = message
+        autoStatus.text = message
+        autoStatus.setTextColor(getColor(R.color.danger))
+    }
+
+    private fun startServiceStep(resetPlan: Boolean) {
+        if (!serviceSessionMode || !resumed || servicePlan.isEmpty()) return
+        if (resetPlan) serviceStepIndex = 0
+        val configuration = servicePlan[serviceStepIndex]
+        sceneSpinner.setSelection(configuration.scene.ordinal)
+        stressLevelSpinner.setSelection(configuration.level.ordinal)
+        autoStepStartedWallMs = System.currentTimeMillis()
+        startConfiguration(configuration)
+        service?.recordGpu3dStep(configuration.scene, configuration.level)
+        renderServiceProgress(configuration)
+    }
+
+    private fun updateServiceSession(metrics: Gpu3dStressMetrics) {
+        val configuration = serviceConfiguration ?: return
+        if (!metrics.running || metrics.lastError.isNotBlank()) return
+        if (!serviceSurfaceReported && metrics.renderedFrames > 0L) {
+            serviceSurfaceReported = true
+            service?.setVisualSurfaceAttached(true)
+        }
+        val displayedFps = metrics.currentFps.takeIf { it > 0.0 } ?: metrics.averageFps
+        service?.updateVisualMetrics(
+            displayedFps,
+            metrics.frameTimeMs * NANOS_PER_MILLISECOND,
+            metrics.minimumFps,
+            metrics.maximumFrameTimeMs * NANOS_PER_MILLISECOND,
+        )
+        renderServiceProgress(Gpu3dStressConfiguration(metrics.level, metrics.scene))
+        if (configuration.gpu3dRunMode == Gpu3dRunMode.FIXED || servicePlan.size <= 1 ||
+            metrics.runtimeMs < configuration.gpu3dStepDurationSeconds * 1_000L
+        ) return
+
+        recordAutoResult(metrics)
+        surface.stopTest()
+        serviceStepIndex = (serviceStepIndex + 1) % servicePlan.size
+        startServiceStep(resetPlan = false)
+        renderAutoResults()
+    }
+
+    private fun renderServiceProgress(configuration: Gpu3dStressConfiguration) {
+        autoStatus.setTextColor(getColor(R.color.text_secondary))
+        autoStatus.text = getString(
+            R.string.gpu3d_integrated_status,
+            getString(configuration.scene.labelResource()),
+            getString(configuration.level.labelResource()),
+            serviceStepIndex + 1,
+            servicePlan.size.coerceAtLeast(1),
+        )
+    }
+
+    private fun stopServiceSurface() {
+        if (!::surface.isInitialized) return
+        recordAutoResult(surface.snapshot())
+        surface.stopTest()
+        service?.updateVisualMetrics(0.0, 0.0, 0.0, 0.0)
+        if (serviceSurfaceReported) service?.setVisualSurfaceAttached(false)
+        serviceSurfaceReported = false
+        window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        renderAutoResults()
+    }
+
+    private fun setServiceControlsWaiting() {
+        sceneSpinner.isEnabled = false
+        stressLevelSpinner.isEnabled = false
+        traversalModeSpinner.isEnabled = false
+        autoDurationSpinner.isEnabled = false
+        customDuration.isEnabled = false
+        autoStartButton.isEnabled = false
+        startButton.isEnabled = false
+        stopButton.isEnabled = false
+        autoStatus.text = getString(R.string.waiting)
+    }
+
     private fun startTest() {
         if (autoPlan != null) return
         startConfiguration(selectedConfiguration())
@@ -275,19 +443,20 @@ class Gpu3dStressActivity : LocalizedActivity() {
     }
 
     private fun setControlsRunning(running: Boolean) {
-        sceneSpinner.isEnabled = !running
-        stressLevelSpinner.isEnabled = !running
-        traversalModeSpinner.isEnabled = !running
-        autoDurationSpinner.isEnabled = !running
-        autoStartButton.isEnabled = !running
-        startButton.isEnabled = !running
-        stopButton.isEnabled = running
+        val canConfigure = !running && !serviceSessionMode
+        sceneSpinner.isEnabled = canConfigure
+        stressLevelSpinner.isEnabled = canConfigure
+        traversalModeSpinner.isEnabled = canConfigure
+        autoDurationSpinner.isEnabled = canConfigure
+        autoStartButton.isEnabled = canConfigure
+        startButton.isEnabled = canConfigure
+        stopButton.isEnabled = if (serviceSessionMode) serviceConfiguration != null else running
         updateCustomDurationEnabled(running)
     }
 
     private fun updateCustomDurationEnabled(running: Boolean = stopButton.isEnabled) {
         if (!::customDuration.isInitialized || !::autoDurationSpinner.isInitialized) return
-        customDuration.isEnabled = !running &&
+        customDuration.isEnabled = !serviceSessionMode && !running &&
             selectedAutoDuration() == Gpu3dAutoDuration.CUSTOM
     }
 
@@ -341,6 +510,11 @@ class Gpu3dStressActivity : LocalizedActivity() {
                 autoStatus.text = getString(R.string.gpu3d_auto_error)
                 renderAutoResults()
             }
+            if (serviceSessionMode) {
+                service?.reportOnscreenVisualError(metrics.lastError)
+                autoStatus.text = getString(R.string.gpu3d_auto_error)
+                autoStatus.setTextColor(getColor(R.color.danger))
+            }
             surface.stopTest()
             Toast.makeText(
                 this,
@@ -385,6 +559,7 @@ class Gpu3dStressActivity : LocalizedActivity() {
             startTimeMillis = autoStepStartedWallMs,
             endTimeMillis = System.currentTimeMillis(),
         )
+        while (autoResults.size > MAX_DISPLAY_RESULTS) autoResults.removeAt(0)
         autoStepStartedWallMs = 0L
     }
 
@@ -471,22 +646,6 @@ class Gpu3dStressActivity : LocalizedActivity() {
     private fun selectedAutoDuration(): Gpu3dAutoDuration =
         Gpu3dAutoDuration.entries[autoDurationSpinner.selectedItemPosition.coerceAtLeast(0)]
 
-    private fun Gpu3dStressLevel.labelResource(): Int = when (this) {
-        Gpu3dStressLevel.LOW -> R.string.gpu3d_level_low
-        Gpu3dStressLevel.MEDIUM -> R.string.gpu3d_level_medium
-        Gpu3dStressLevel.HIGH -> R.string.gpu3d_level_high
-        Gpu3dStressLevel.EXTREME -> R.string.gpu3d_level_extreme
-        Gpu3dStressLevel.MAX -> R.string.gpu3d_level_max
-    }
-
-    private fun Gpu3dStressScene.labelResource(): Int = when (this) {
-        Gpu3dStressScene.WATER_RACE -> R.string.gpu3d_scene_water_race
-        Gpu3dStressScene.PARTICLE_STORM -> R.string.gpu3d_scene_particle_storm
-        Gpu3dStressScene.SHADER_STRESS -> R.string.gpu3d_scene_shader_stress
-        Gpu3dStressScene.GEOMETRY_STRESS -> R.string.gpu3d_scene_geometry_stress
-        Gpu3dStressScene.OVERDRAW_STRESS -> R.string.gpu3d_scene_overdraw_stress
-    }
-
     private fun Gpu3dTraversalMode.labelResource(): Int = when (this) {
         Gpu3dTraversalMode.LEVELS -> R.string.gpu3d_traversal_levels
         Gpu3dTraversalMode.SCENES -> R.string.gpu3d_traversal_scenes
@@ -505,12 +664,12 @@ class Gpu3dStressActivity : LocalizedActivity() {
             if (!resumed) return
             val metrics = surface.snapshot()
             renderMetrics(metrics)
-            updateAutoTest(metrics)
+            if (serviceSessionMode) updateServiceSession(metrics) else updateAutoTest(metrics)
             handler.postDelayed(this, METRICS_INTERVAL_MS)
         }
     }
 
-    private companion object {
+    companion object {
         const val REQUIRED_GLES_VERSION = 0x00030000
         const val METRICS_INTERVAL_MS = 500L
         const val STATE_LEVEL = "gpu3d.level"
@@ -518,5 +677,12 @@ class Gpu3dStressActivity : LocalizedActivity() {
         const val STATE_TRAVERSAL = "gpu3d.traversal"
         const val STATE_AUTO_DURATION = "gpu3d.autoDuration"
         const val STATE_CUSTOM_DURATION = "gpu3d.customDuration"
+        const val EXTRA_SERVICE_SESSION = "gpu3d.serviceSession"
+        const val NANOS_PER_MILLISECOND = 1_000_000.0
+        const val MAX_DISPLAY_RESULTS = 50
+
+        fun serviceSessionIntent(context: Context): Intent =
+            Intent(context, Gpu3dStressActivity::class.java)
+                .putExtra(EXTRA_SERVICE_SESSION, true)
     }
 }

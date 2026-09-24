@@ -27,6 +27,14 @@ GpuVisualActivity / SurfaceView
                  │
                  └── Service Session remains alive when detached
 
+Gpu3dStressActivity / GLSurfaceView
+                 │ Surface lifecycle + actual frame metrics
+                 ▼
+ OpenGL ES 3 renderer → Water / Particle / Shader / Geometry / Overdraw
+                 │
+                 ├── Fixed / Traverse Levels / Traverse Scenes
+                 └── metrics + sparse step events → Service Session
+
 Monitoring
 HardwareMonitorService → GenericAndroidMonitor
                          ├── RootHardwareMonitor
@@ -55,7 +63,7 @@ START is accepted only in IDLE. A generation token cancels stale work and one ex
 ```text
 Activity onStop
 → observer/UI detach
-→ onscreen Vulkan Surface stops
+→ onscreen Vulkan or OpenGL ES 3 Surface stops
 → Service Session continues
 
 Screen off
@@ -63,10 +71,12 @@ Screen off
 → CPU / Memory / Storage / Compute continue
 → Mixed: Visual pauses, existing Compute continues
 → Visual-only: bounded Compute fallback starts
+→ 3D scene-only: bounded Compute fallback starts
+→ MAX GPU Stress: existing Compute continues
 
-Screen on + Visual Surface attached
-→ onscreen Visual resumes
-→ Visual-only Compute fallback stops
+Screen on + onscreen Surface attached
+→ Vulkan Visual or selected 3D scene resumes
+→ onscreen-only Compute fallback stops
 ```
 
 The Activity never calls `stopAll()` from `onPause()` or `onStop()`. Rebinding reconstructs UI from the Service snapshot, preserving the same session ID and elapsed time. The Surface worker is joined on Surface destroy; its loss cannot create or restart the Compute worker.
@@ -86,6 +96,12 @@ Steady state primes three bounded submissions, waits only the oldest fence, read
 `GpuVisualActivity` dedicates most of the display to a real Vulkan swapchain scene. `VulkanVisualSurfaceView` passes its Surface through JNI to an `ANativeWindow`; native code creates an Android surface, FIFO swapchain, render pass, procedural fragment pipeline, two presentation frames in flight, and actual FPS/Frame Time counters.
 
 The Phase 4 640×640 offscreen renderer remains in the native backend for compatibility, but v0.5 does not stack it with the onscreen scene. Visual uses onscreen graphics while attached and Compute fallback while unavailable. Mixed starts Compute once and combines it with onscreen graphics; after detach only that same Compute worker remains.
+
+### GPU 3D Integration
+
+Phase 5 adds an OpenGL ES 3 renderer beside the existing Vulkan backends. `Gpu3dIntegratedPlan` maps the selected unified `GpuMode` to Water Race, Particle, Shader, Geometry, or Overdraw and produces either one fixed step, five level steps, or five scene steps. `Gpu3dStressActivity` can still run the standalone Phase 4 scene tool, or bind to `StressForegroundService` as the onscreen view of an existing unified Session.
+
+Scene-only modes use bounded Compute fallback while no 3D Surface is attached. Attaching a rendered Surface stops that fallback; pausing or destroying it restarts fallback without resetting Session duration. `MAX_GPU_STRESS` keeps Compute active both with and without the Surface and forces the 3D level to MAX. Actual FPS, Frame Time, minimum/maximum observations, and scene-step events flow back through the controller into History and JSON export.
 
 ## Resource Cleanup
 
@@ -108,7 +124,7 @@ CRITICAL+       THERMAL_LIMITED → STOP ALL
 
 ## Session Data and Compatibility
 
-Each run accumulates CPU/Core Equivalent, PSS/Memory Activity, Dispatch/Work Time, Visual FPS/Frame Time, Storage totals/rates, Thermal Timeline, CPU frequency observations, and battery-power observations. Schema 3 adds `screenMode`, off/on timestamps, cumulative screen-off duration, transition count, Compute fallback, wake result/reason, and a sparse Session Event Timeline.
+Each run accumulates CPU/Core Equivalent, PSS/Memory Activity, Dispatch/Work Time, Visual/3D FPS and Frame Time, Storage totals/rates, Thermal Timeline, CPU frequency observations, and battery-power observations. Schema 3 added `screenMode`, off/on timestamps, cumulative screen-off duration, transition count, Compute fallback, wake result/reason, and a sparse Session Event Timeline. Schema 4 adds GPU 3D level/run-mode/step-duration configuration, minimum FPS, maximum Frame Time, and `GPU_3D_STEP` events while preserving safe defaults for older data.
 
 Finish freezes one `StressSessionSnapshot`, saves newest-first history, and trims to 20/30/50. Earlier Phase 4 JSON has safe Screen On / no-event defaults and legacy stop reasons are mapped. Runtime state is never persisted as a restart instruction.
 

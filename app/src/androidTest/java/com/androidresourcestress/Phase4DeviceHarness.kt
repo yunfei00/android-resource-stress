@@ -95,6 +95,7 @@ class Phase4DeviceHarness : Instrumentation(), CombinedStressController.Listener
                 "gpu3dPhase2" -> exerciseGpu3dPhase2()
                 "gpu3dPhase3" -> exerciseGpu3dPhase3()
                 "gpu3dPhase4" -> exerciseGpu3dPhase4()
+                "gpu3dPhase5" -> exerciseGpu3dPhase5()
                 "visualLifecycle" -> exerciseVisualLifecycle()
                 "serviceLifecycle" -> exerciseServiceLifecycle()
                 "notificationStop" -> exerciseNotificationStop()
@@ -759,6 +760,148 @@ class Phase4DeviceHarness : Instrumentation(), CombinedStressController.Listener
         Gpu3dStressScene.OVERDRAW_STRESS -> R.string.gpu3d_scene_overdraw_stress
     }
 
+    private fun exerciseGpu3dPhase5(): List<String> {
+        val mode = enumArgument("gpuMode", GpuMode.WATER_RACE)
+        check(mode.usesGpu3d) { "gpu3dPhase5 requires a 3D GpuMode, got $mode" }
+        val runMode = enumArgument("gpu3dRunMode", Gpu3dRunMode.TRAVERSE_SCENES)
+        val level = enumArgument("gpu3dLevel", Gpu3dStressLevel.HIGH)
+        val stepSeconds = argumentInt("stepSeconds", 2).coerceIn(2, 60)
+        val runMs = argumentLong("runMs", 12_000L).coerceAtLeast(4_000L)
+        val configuration = PresetConfigurations.create(
+            StressPreset.CUSTOM,
+            StressDuration.CONTINUOUS,
+        ).copy(
+            cpuEnabled = false,
+            gpuEnabled = true,
+            memoryEnabled = false,
+            storageEnabled = false,
+            gpuTargetPercent = 100,
+            gpuMode = mode,
+            gpu3dLevel = level,
+            gpu3dRunMode = runMode,
+            gpu3dStepDurationSeconds = stepSeconds,
+            screenMode = ScreenMode.ON,
+        )
+        val connectionLatch = CountDownLatch(1)
+        var boundService: StressForegroundService? = null
+        val connection = object : ServiceConnection {
+            override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
+                boundService = (binder as? StressForegroundService.LocalBinder)?.service
+                connectionLatch.countDown()
+            }
+
+            override fun onServiceDisconnected(name: ComponentName?) {
+                boundService = null
+            }
+        }
+        StressForegroundService.start(targetContext, configuration)
+        targetContext.bindService(
+            Intent(targetContext, StressForegroundService::class.java),
+            connection,
+            Context.BIND_AUTO_CREATE,
+        )
+        check(connectionLatch.await(10L, TimeUnit.SECONDS)) { "GPU 3D service bind timed out" }
+        val service = checkNotNull(boundService)
+        var activity: Gpu3dStressActivity? = null
+        var resumedActivity: Gpu3dStressActivity? = null
+        return try {
+            val startDeadline = SystemClock.elapsedRealtime() + START_TIMEOUT_MS
+            while (service.state != CombinedStressState.RUNNING &&
+                SystemClock.elapsedRealtime() < startDeadline
+            ) SystemClock.sleep(POLL_MS)
+            check(service.state == CombinedStressState.RUNNING) {
+                "GPU 3D service did not start: ${service.state}"
+            }
+            activity = launchGpu3dServiceActivity()
+            val surface = activity.findViewById<Gpu3dStressSurfaceView>(R.id.gpu3dSurface)
+            val deadline = SystemClock.elapsedRealtime() + runMs
+            val observedScenes = linkedSetOf<Gpu3dStressScene>()
+            while (SystemClock.elapsedRealtime() < deadline) {
+                SystemClock.sleep(500L)
+                val metrics = surface.snapshot()
+                if (metrics.running && metrics.renderedFrames > 0L) observedScenes += metrics.scene
+                check(metrics.lastError.isBlank()) { "Integrated GPU 3D error: ${metrics.lastError}" }
+            }
+            val beforeBackground = surface.snapshot()
+            check(beforeBackground.running && beforeBackground.renderedFrames > 0L)
+            check(beforeBackground.averageFps > 0.0)
+            val active = checkNotNull(service.snapshot?.currentSession)
+            val computeWithSurface = GpuNativeStatus.fromCode(NativeStress.getGpuStressStatus())
+            if (mode.keepsComputeWithSurface) {
+                check(computeWithSurface == GpuNativeStatus.RUNNING) {
+                    "$mode should retain Compute while 3D renders: $computeWithSurface"
+                }
+            } else {
+                check(computeWithSurface != GpuNativeStatus.RUNNING) {
+                    "$mode should stop fallback Compute while 3D renders"
+                }
+            }
+
+            if (argumentBoolean("lifecycle", true)) {
+                runOnMainSync { activity.moveTaskToBack(true) }
+                SystemClock.sleep(2_000L)
+                check(!surface.snapshot().running) { "GPU 3D Surface survived Activity onStop" }
+                if (mode.isOnscreenOnly) {
+                    check(
+                        GpuNativeStatus.fromCode(NativeStress.getGpuStressStatus()) ==
+                            GpuNativeStatus.RUNNING,
+                    ) { "GPU 3D Compute fallback did not start in background" }
+                }
+                resumedActivity = launchGpu3dServiceActivity()
+                SystemClock.sleep(3_000L)
+                val resumed = resumedActivity.findViewById<Gpu3dStressSurfaceView>(
+                    R.id.gpu3dSurface,
+                ).snapshot()
+                check(resumed.running && resumed.renderedFrames > 0L) {
+                    "GPU 3D Surface did not resume: ${resumed.lastError}"
+                }
+            }
+
+            service.stopSession(StopReason.USER_STOP)
+            val stopDeadline = SystemClock.elapsedRealtime() + STOP_TIMEOUT_MS
+            while (service.state != CombinedStressState.IDLE &&
+                SystemClock.elapsedRealtime() < stopDeadline
+            ) SystemClock.sleep(POLL_MS)
+            check(service.state == CombinedStressState.IDLE)
+            val finished = SessionHistoryStore(targetContext).find(active.startWallTimeMs)
+                ?: error("Integrated GPU 3D Session was not persisted")
+            val steps = finished.eventTimeline.filter { it.type == SessionEventType.GPU_3D_STEP }
+            check(steps.isNotEmpty()) { "GPU 3D step log is empty" }
+            check(finished.configuration.gpuMode == mode)
+            check(finished.peakVisualFps > 0.0) { "GPU 3D peak FPS was not saved" }
+            check(finished.minimumVisualFps > 0.0) { "GPU 3D minimum FPS was not saved" }
+            check(finished.maximumVisualFrameTimeNanos > 0.0) {
+                "GPU 3D maximum frame time was not saved"
+            }
+            listOf(
+                "mode=$mode runMode=$runMode level=$level stepSeconds=$stepSeconds",
+                "observedScenes=${observedScenes.joinToString()} loggedSteps=${steps.joinToString { it.detail.orEmpty() }}",
+                "fps peak/min=${finished.peakVisualFps}/${finished.minimumVisualFps} " +
+                    "frameMs avg/max=${finished.averageVisualFrameTimeNanos / 1_000_000.0}/" +
+                    "${finished.maximumVisualFrameTimeNanos / 1_000_000.0}",
+                "computeWithSurface=$computeWithSurface fallback=${finished.screenFallbackUsed}",
+                "unifiedStartStop=PASS duration=PASS history=PASS log=PASS lifecycle=PASS",
+            )
+        } finally {
+            resumedActivity?.let { value -> runOnMainSync { value.finish() } }
+            activity?.let { value -> runOnMainSync { value.finish() } }
+            StressForegroundService.stop(targetContext)
+            targetContext.unbindService(connection)
+        }
+    }
+
+    private fun launchGpu3dServiceActivity(): Gpu3dStressActivity {
+        val monitor = addMonitor(Gpu3dStressActivity::class.java.name, null, false)
+        targetContext.startActivity(
+            Gpu3dStressActivity.serviceSessionIntent(targetContext)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+        )
+        val activity = waitForMonitorWithTimeout(monitor, 10_000L)
+        removeMonitor(monitor)
+        return activity as? Gpu3dStressActivity
+            ?: error("Gpu3dStressActivity launch timed out")
+    }
+
     private fun exerciseVisualLifecycle(): List<String> {
         val configuration = PresetConfigurations.create(
             StressPreset.CUSTOM,
@@ -1027,7 +1170,7 @@ class Phase4DeviceHarness : Instrumentation(), CombinedStressController.Listener
                 SystemClock.elapsedRealtime() < startDeadline
             ) SystemClock.sleep(POLL_MS)
             check(boundService.state == CombinedStressState.RUNNING)
-            if (mode != GpuMode.COMPUTE) visualActivity = launchVisualActivity()
+            if (mode.usesVulkanVisual) visualActivity = launchVisualActivity()
             val runMs = argumentLong("runMs", 300_000L)
             val deadline = SystemClock.elapsedRealtime() + runMs
             val samples = mutableListOf<GpuSustainedSample>()

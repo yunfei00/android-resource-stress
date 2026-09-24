@@ -79,7 +79,7 @@ class GpuVisualActivity : LocalizedActivity(), StressForegroundService.Observer 
     override fun onStressSnapshot(snapshot: CombinedRuntimeSnapshot) {
         val configuration = snapshot.currentSession?.configuration
         if (configuration != null && configuration.gpuEnabled &&
-            configuration.gpuMode != GpuMode.COMPUTE
+            configuration.gpuMode.usesVulkanVisual
         ) {
             activeConfiguration = configuration
             surface.start(configuration.gpuTargetPercent)

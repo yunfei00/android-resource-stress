@@ -28,13 +28,43 @@ fun Context.thermalStatusDisplay(status: Int): String = getString(
     },
 )
 
-fun Context.gpuModeLabel(mode: GpuMode): String = getString(
-    when (mode) {
-        GpuMode.COMPUTE -> R.string.gpu_mode_compute
-        GpuMode.VISUAL -> R.string.gpu_mode_visual
-        GpuMode.MIXED -> R.string.gpu_mode_mixed
-    },
-)
+fun GpuMode.labelResource(): Int = when (this) {
+    GpuMode.COMPUTE -> R.string.gpu_mode_compute
+    GpuMode.VISUAL -> R.string.gpu_mode_visual
+    GpuMode.MIXED -> R.string.gpu_mode_mixed
+    GpuMode.WATER_RACE -> R.string.gpu_mode_water_race
+    GpuMode.PARTICLE_STRESS -> R.string.gpu_mode_particle_stress
+    GpuMode.SHADER_STRESS -> R.string.gpu_mode_shader_stress
+    GpuMode.GEOMETRY_STRESS -> R.string.gpu_mode_geometry_stress
+    GpuMode.OVERDRAW_STRESS -> R.string.gpu_mode_overdraw_stress
+    GpuMode.MAX_GPU_STRESS -> R.string.gpu_mode_max_stress
+}
+
+fun Context.gpuModeLabel(mode: GpuMode): String = getString(mode.labelResource())
+
+fun Gpu3dRunMode.labelResource(): Int = when (this) {
+    Gpu3dRunMode.FIXED -> R.string.gpu3d_run_fixed
+    Gpu3dRunMode.TRAVERSE_LEVELS -> R.string.gpu3d_run_traverse_levels
+    Gpu3dRunMode.TRAVERSE_SCENES -> R.string.gpu3d_run_traverse_scenes
+}
+
+fun Context.gpu3dRunModeLabel(mode: Gpu3dRunMode): String = getString(mode.labelResource())
+
+fun Gpu3dStressLevel.labelResource(): Int = when (this) {
+    Gpu3dStressLevel.LOW -> R.string.gpu3d_level_low
+    Gpu3dStressLevel.MEDIUM -> R.string.gpu3d_level_medium
+    Gpu3dStressLevel.HIGH -> R.string.gpu3d_level_high
+    Gpu3dStressLevel.EXTREME -> R.string.gpu3d_level_extreme
+    Gpu3dStressLevel.MAX -> R.string.gpu3d_level_max
+}
+
+fun Gpu3dStressScene.labelResource(): Int = when (this) {
+    Gpu3dStressScene.WATER_RACE -> R.string.gpu3d_scene_water_race
+    Gpu3dStressScene.PARTICLE_STORM -> R.string.gpu3d_scene_particle_storm
+    Gpu3dStressScene.SHADER_STRESS -> R.string.gpu3d_scene_shader_stress
+    Gpu3dStressScene.GEOMETRY_STRESS -> R.string.gpu3d_scene_geometry_stress
+    Gpu3dStressScene.OVERDRAW_STRESS -> R.string.gpu3d_scene_overdraw_stress
+}
 
 fun Context.presetLabel(preset: StressPreset): String = getString(
     when (preset) {

@@ -22,6 +22,7 @@ import android.widget.CheckBox
 import android.widget.LinearLayout
 import android.widget.RadioButton
 import android.widget.RadioGroup
+import android.widget.ScrollView
 import android.widget.Spinner
 import android.widget.TextView
 import android.widget.Toast
@@ -112,13 +113,13 @@ class MainActivity : LocalizedActivity(), StressForegroundService.Observer {
         render(snapshot, snapshot.state)
         val session = snapshot.currentSession
         if (session != null && session.configuration.gpuEnabled &&
-            session.configuration.gpuMode != GpuMode.COMPUTE &&
+            session.configuration.gpuMode.requiresOnscreenSurface &&
             session.screenOnAtElapsedMs != null &&
             getSystemService(PowerManager::class.java).isInteractive &&
             visualAutoLaunchedSessionId != session.sessionId
         ) {
             visualAutoLaunchedSessionId = session.sessionId
-            startActivity(Intent(this, GpuVisualActivity::class.java))
+            launchGpuSurfaceActivity(session.configuration)
         }
     }
 
@@ -173,9 +174,9 @@ class MainActivity : LocalizedActivity(), StressForegroundService.Observer {
         }
         gpuCard.setOnClickListener {
             if (isIdle()) showGpuDialog() else if (
-                configuration.gpuEnabled && configuration.gpuMode != GpuMode.COMPUTE
+                configuration.gpuEnabled && configuration.gpuMode.requiresOnscreenSurface
             ) {
-                startActivity(Intent(this, GpuVisualActivity::class.java))
+                launchGpuSurfaceActivity(configuration)
             } else openMonitor()
         }
         memoryCard.setOnClickListener {
@@ -238,7 +239,7 @@ class MainActivity : LocalizedActivity(), StressForegroundService.Observer {
             return
         }
         if (configuration.screenMode == ScreenMode.OFF && configuration.gpuEnabled &&
-            configuration.gpuMode == GpuMode.VISUAL
+            configuration.gpuMode.requiresOnscreenSurface
         ) {
             AlertDialog.Builder(this)
                 .setTitle(R.string.screen_off_visual_title)
@@ -256,9 +257,9 @@ class MainActivity : LocalizedActivity(), StressForegroundService.Observer {
         screenOffPromptPending = configuration.screenMode == ScreenMode.OFF
         StressForegroundService.start(this, configuration)
         if (configuration.screenMode == ScreenMode.ON && configuration.gpuEnabled &&
-            configuration.gpuMode != GpuMode.COMPUTE
+            configuration.gpuMode.requiresOnscreenSurface
         ) {
-            startActivity(Intent(this, GpuVisualActivity::class.java))
+            launchGpuSurfaceActivity(configuration)
         }
     }
 
@@ -315,35 +316,58 @@ class MainActivity : LocalizedActivity(), StressForegroundService.Observer {
             isChecked = configuration.gpuEnabled
         }
         val mode = choiceGroup(
-            listOf(
-                100 + GpuMode.COMPUTE.ordinal to R.string.gpu_mode_compute,
-                100 + GpuMode.VISUAL.ordinal to R.string.gpu_mode_visual,
-                100 + GpuMode.MIXED.ordinal to R.string.gpu_mode_mixed,
-            ),
+            GpuMode.entries.map { gpuMode ->
+                100 + gpuMode.ordinal to gpuMode.labelResource()
+            },
             100 + configuration.gpuMode.ordinal,
         )
         val target = choiceGroup(
             listOf(25 to R.string.load_25, 50 to R.string.load_50, 75 to R.string.load_75, 100 to R.string.load_100),
             configuration.gpuTargetPercent,
         )
-        val gpu3dPrototype = Button(this).apply {
-            setText(R.string.gpu3d_open)
-            setOnClickListener {
-                startActivity(Intent(this@MainActivity, Gpu3dStressActivity::class.java))
-            }
-        }
+        val gpu3dLevel = choiceGroup(
+            Gpu3dStressLevel.entries.map { level ->
+                200 + level.ordinal to level.labelResource()
+            },
+            200 + configuration.gpu3dLevel.ordinal,
+        )
+        val gpu3dRunMode = choiceGroup(
+            Gpu3dRunMode.entries.map { runMode ->
+                300 + runMode.ordinal to runMode.labelResource()
+            },
+            300 + configuration.gpu3dRunMode.ordinal,
+        )
+        val gpu3dStepDuration = choiceGroup(
+            listOf(
+                10 to R.string.gpu3d_auto_10s,
+                20 to R.string.gpu3d_auto_20s,
+                30 to R.string.gpu3d_auto_30s,
+                60 to R.string.gpu3d_auto_60s,
+            ),
+            configuration.gpu3dStepDurationSeconds.takeIf { it in setOf(10, 20, 30, 60) }
+                ?: 20,
+        )
         showConfigDialog(
             R.string.resource_gpu,
             enabled,
             labeledGroup(R.string.gpu_mode, mode),
             target,
-            gpu3dPrototype,
+            labeledGroup(R.string.gpu3d_stress_level, gpu3dLevel),
+            labeledGroup(R.string.gpu3d_run_mode, gpu3dRunMode),
+            labeledGroup(R.string.gpu3d_step_duration, gpu3dStepDuration),
         ) {
             configuration = configuration.copy(
                 preset = StressPreset.CUSTOM,
                 gpuEnabled = enabled.isChecked,
                 gpuMode = GpuMode.entries[mode.checkedRadioButtonId - 100],
                 gpuTargetPercent = target.checkedRadioButtonId,
+                gpu3dLevel = Gpu3dStressLevel.entries[
+                    gpu3dLevel.checkedRadioButtonId - 200
+                ],
+                gpu3dRunMode = Gpu3dRunMode.entries[
+                    gpu3dRunMode.checkedRadioButtonId - 300
+                ],
+                gpu3dStepDurationSeconds = gpu3dStepDuration.checkedRadioButtonId,
             )
         }
     }
@@ -430,9 +454,10 @@ class MainActivity : LocalizedActivity(), StressForegroundService.Observer {
             setPadding(padding, 0, padding, 0)
             views.forEach(::addView)
         }
+        val scroll = ScrollView(this).apply { addView(container) }
         AlertDialog.Builder(this)
             .setTitle(title)
-            .setView(container)
+            .setView(scroll)
             .setPositiveButton(R.string.apply) { _, _ ->
                 onApply()
                 saveAndRenderConfiguration()
@@ -517,7 +542,7 @@ class MainActivity : LocalizedActivity(), StressForegroundService.Observer {
             gpuCard.text = getString(
                 R.string.resource_card_gpu,
                 gpuModeLabel(active.gpuMode),
-                if (active.gpuMode == GpuMode.VISUAL) {
+                if (active.gpuMode.requiresOnscreenSurface && snapshot.visualFps > 0.0) {
                     getString(R.string.fps_value, snapshot.visualFps)
                 } else GpuMetricsFormatter.formatDispatchRate(snapshot.gpuDispatchRate),
             )
@@ -548,6 +573,15 @@ class MainActivity : LocalizedActivity(), StressForegroundService.Observer {
 
     private fun isIdle(): Boolean = (service?.state ?: CombinedStressState.IDLE) == CombinedStressState.IDLE
     private fun openMonitor() = startActivity(Intent(this, MonitorActivity::class.java))
+    private fun launchGpuSurfaceActivity(configuration: CombinedStressConfiguration) {
+        val intent = if (configuration.gpuMode.usesGpu3d) {
+            Gpu3dStressActivity.serviceSessionIntent(this)
+        } else {
+            Intent(this, GpuVisualActivity::class.java)
+        }
+        startActivity(intent)
+    }
+
     private fun selectedDuration(): StressDuration = durations.getOrElse(durationSpinner.selectedItemPosition) { StressDuration.MINUTES_5 }
     private fun selectedScreenMode(): ScreenMode = if (screenModeGroup.checkedRadioButtonId == R.id.screenModeOff) ScreenMode.OFF else ScreenMode.ON
     private fun formatPercent(value: Double): String = String.format(java.util.Locale.US, "%.1f%%", value)

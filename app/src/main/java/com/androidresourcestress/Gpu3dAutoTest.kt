@@ -108,3 +108,27 @@ data class Gpu3dAutoTestStepResult(
         )
     }
 }
+
+object Gpu3dIntegratedPlan {
+    fun create(configuration: CombinedStressConfiguration): List<Gpu3dStressConfiguration> {
+        val scene = configuration.gpuMode.gpu3dScene() ?: return emptyList()
+        val level = if (configuration.gpuMode == GpuMode.MAX_GPU_STRESS) {
+            Gpu3dStressLevel.MAX
+        } else {
+            configuration.gpu3dLevel
+        }
+        return when (configuration.gpu3dRunMode) {
+            Gpu3dRunMode.FIXED -> listOf(Gpu3dStressConfiguration(level, scene))
+            Gpu3dRunMode.TRAVERSE_LEVELS -> if (
+                configuration.gpuMode == GpuMode.MAX_GPU_STRESS
+            ) {
+                listOf(Gpu3dStressConfiguration(Gpu3dStressLevel.MAX, scene))
+            } else {
+                Gpu3dStressLevel.entries.map { Gpu3dStressConfiguration(it, scene) }
+            }
+            Gpu3dRunMode.TRAVERSE_SCENES -> Gpu3dStressScene.entries.map {
+                Gpu3dStressConfiguration(level, it)
+            }
+        }
+    }
+}

@@ -56,8 +56,10 @@ class CombinedStressController(
         var endPowerObservation: PowerObservation? = null,
         var peakEstimatedBatteryPowerWatts: Double? = null,
         var peakVisualFps: Double = 0.0,
+        var minimumVisualFps: Double = 0.0,
         var visualFrameTimeTotalNanos: Double = 0.0,
         var visualFrameTimeSampleCount: Long = 0L,
+        var maximumVisualFrameTimeNanos: Double = 0.0,
         var screenOffAtElapsedMs: Long? = null,
         var screenOnAtElapsedMs: Long? = null,
         var screenOffDurationMs: Long = 0L,
@@ -107,11 +109,13 @@ class CombinedStressController(
             endPowerObservation = endPowerObservation,
             peakEstimatedBatteryPowerWatts = peakEstimatedBatteryPowerWatts,
             peakVisualFps = peakVisualFps,
+            minimumVisualFps = minimumVisualFps,
             averageVisualFrameTimeNanos = if (visualFrameTimeSampleCount > 0L) {
                 visualFrameTimeTotalNanos / visualFrameTimeSampleCount
             } else {
                 0.0
             },
+            maximumVisualFrameTimeNanos = maximumVisualFrameTimeNanos,
             screenMode = configuration.screenMode,
             screenOffAtElapsedMs = screenOffAtElapsedMs,
             screenOnAtElapsedMs = screenOnAtElapsedMs,
@@ -191,6 +195,12 @@ class CombinedStressController(
     private var visualFrameTimeNanos = 0.0
 
     @Volatile
+    private var visualMinimumFps = 0.0
+
+    @Volatile
+    private var visualMaximumFrameTimeNanos = 0.0
+
+    @Volatile
     var state: CombinedStressState = CombinedStressState.IDLE
         private set
 
@@ -226,6 +236,9 @@ class CombinedStressController(
             lastLoggedThermalStatus = null
             visualFps = 0.0
             visualFrameTimeNanos = 0.0
+            visualMinimumFps = 0.0
+            visualMaximumFrameTimeNanos = 0.0
+            visualSurfaceAttached = false
             generation
         }
         postState(CombinedStressState.STARTING)
@@ -334,10 +347,21 @@ class CombinedStressController(
                 recordThermalEventIfChanged(session, thermal, now)
                 recordHardwareObservation(session, hardware, now)
                 session.peakVisualFps = max(session.peakVisualFps, visualFps)
+                if (visualMinimumFps > 0.0) {
+                    session.minimumVisualFps = if (session.minimumVisualFps > 0.0) {
+                        min(session.minimumVisualFps, visualMinimumFps)
+                    } else {
+                        visualMinimumFps
+                    }
+                }
                 if (visualFrameTimeNanos > 0.0) {
                     session.visualFrameTimeTotalNanos += visualFrameTimeNanos
                     session.visualFrameTimeSampleCount += 1L
                 }
+                session.maximumVisualFrameTimeNanos = max(
+                    session.maximumVisualFrameTimeNanos,
+                    visualMaximumFrameTimeNanos,
+                )
 
                 if (state == CombinedStressState.RUNNING) {
                     errorToStop = runtimeResourceError(
@@ -398,14 +422,30 @@ class CombinedStressController(
         )
     }
 
-    fun updateVisualMetrics(fps: Double, frameTimeNanos: Double) {
+    fun updateVisualMetrics(
+        fps: Double,
+        frameTimeNanos: Double,
+        minimumFps: Double = fps,
+        maximumFrameTimeNanos: Double = frameTimeNanos,
+    ) {
         visualFps = fps.takeIf { it.isFinite() && it >= 0.0 } ?: 0.0
         visualFrameTimeNanos = frameTimeNanos.takeIf { it.isFinite() && it >= 0.0 } ?: 0.0
+        visualMinimumFps = minimumFps.takeIf { it.isFinite() && it >= 0.0 } ?: 0.0
+        visualMaximumFrameTimeNanos = maximumFrameTimeNanos
+            .takeIf { it.isFinite() && it >= 0.0 } ?: 0.0
     }
 
     fun setVisualSurfaceAttached(attached: Boolean) {
         synchronized(lock) { visualSurfaceAttached = attached }
         executor.execute { updateVisualRuntimeForSurface() }
+    }
+
+    fun recordGpu3dStep(scene: Gpu3dStressScene, level: Gpu3dStressLevel) {
+        synchronized(lock) {
+            if (closed || state != CombinedStressState.RUNNING) return
+            recordEventLocked(SessionEventType.GPU_3D_STEP, "${scene.name}/${level.name}")
+        }
+        logInfo("GPU 3D step: scene=${scene.name} level=${level.name}")
     }
 
     fun recordScreenState(screenOn: Boolean) {
@@ -576,7 +616,7 @@ class CombinedStressController(
                         "target=${configuration.gpuTargetPercent}%",
                 )
                 ensureStartActive(operationGeneration)
-                if (configuration.gpuMode == GpuMode.VISUAL) {
+                if (configuration.gpuMode.isOnscreenOnly) {
                     computeFallbackActive = true
                     session.screenFallbackUsed = true
                     session.eventTimeline += SessionEvent(
@@ -715,6 +755,11 @@ class CombinedStressController(
             configuration.gpuTargetPercent !in VALID_TARGETS
         ) {
             throw IllegalArgumentException("CPU/GPU target must be 25, 50, 75, or 100")
+        }
+        if (configuration.gpu3dStepDurationSeconds !in
+            Gpu3dAutoDuration.MIN_SECONDS..Gpu3dAutoDuration.MAX_SECONDS
+        ) {
+            throw IllegalArgumentException("GPU 3D step duration must be between 1 and 3600 seconds")
         }
     }
 
@@ -978,13 +1023,13 @@ class CombinedStressController(
     }
 
     private fun expectsCompute(configuration: CombinedStressConfiguration): Boolean =
-        configuration.gpuMode != GpuMode.VISUAL || computeFallbackActive
+        configuration.gpuMode.keepsComputeWithSurface || computeFallbackActive
 
     private fun expectsVisual(configuration: CombinedStressConfiguration): Boolean =
         false // The dedicated Activity owns and monitors the onscreen Vulkan Surface.
 
     fun reportOnscreenVisualError(message: String) {
-        executor.execute { triggerRuntimeError("Vulkan onscreen visual error: $message") }
+        executor.execute { triggerRuntimeError("Onscreen GPU rendering error: $message") }
     }
 
     private fun updateVisualRuntimeForSurface() {
@@ -992,7 +1037,7 @@ class CombinedStressController(
             if (closed || state != CombinedStressState.RUNNING) return
             currentSession?.configuration ?: return
         }
-        if (!configuration.gpuEnabled || configuration.gpuMode == GpuMode.COMPUTE) return
+        if (!configuration.gpuEnabled || !configuration.gpuMode.requiresOnscreenSurface) return
         val shouldRenderVisual = synchronized(lock) { visualSurfaceAttached && screenInteractive }
         synchronized(lock) { gpuTransitioning = true }
         try {
@@ -1003,7 +1048,7 @@ class CombinedStressController(
                 NativeStress.stopVisualGpuStress()
             }
             if (shouldRenderVisual) {
-                if (configuration.gpuMode == GpuMode.VISUAL && computeFallbackActive) {
+                if (configuration.gpuMode.isOnscreenOnly && computeFallbackActive) {
                     NativeStress.stopGpuStress()
                     synchronized(lock) {
                         computeFallbackActive = false
@@ -1013,7 +1058,7 @@ class CombinedStressController(
                 synchronized(lock) { recordEventLocked(SessionEventType.VISUAL_RESUMED) }
             } else {
                 synchronized(lock) { recordEventLocked(SessionEventType.VISUAL_PAUSED) }
-                if (configuration.gpuMode == GpuMode.VISUAL &&
+                if (configuration.gpuMode.isOnscreenOnly &&
                     GpuNativeStatus.fromCode(NativeStress.getGpuStressStatus()) !=
                     GpuNativeStatus.RUNNING
                 ) {
@@ -1036,7 +1081,8 @@ class CombinedStressController(
 
     private fun recordEventLocked(type: SessionEventType, detail: String? = null) {
         val session = currentSession ?: return
-        if (session.eventTimeline.lastOrNull()?.type == type) return
+        val last = session.eventTimeline.lastOrNull()
+        if (last?.type == type && last.detail == detail) return
         val elapsed = (SystemClock.elapsedRealtime() - session.startElapsedTimeMs)
             .coerceAtLeast(0L)
         session.eventTimeline += SessionEvent(elapsed, type, detail)

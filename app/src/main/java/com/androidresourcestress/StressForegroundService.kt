@@ -102,8 +102,13 @@ class StressForegroundService : Service(), CombinedStressController.Listener {
         controller.stopAll(reason)
     }
 
-    fun updateVisualMetrics(fps: Double, frameTimeNanos: Double) {
-        controller.updateVisualMetrics(fps, frameTimeNanos)
+    fun updateVisualMetrics(
+        fps: Double,
+        frameTimeNanos: Double,
+        minimumFps: Double = fps,
+        maximumFrameTimeNanos: Double = frameTimeNanos,
+    ) {
+        controller.updateVisualMetrics(fps, frameTimeNanos, minimumFps, maximumFrameTimeNanos)
     }
 
     fun reportOnscreenVisualError(message: String) {
@@ -112,6 +117,10 @@ class StressForegroundService : Service(), CombinedStressController.Listener {
 
     fun setVisualSurfaceAttached(attached: Boolean) {
         controller.setVisualSurfaceAttached(attached)
+    }
+
+    fun recordGpu3dStep(scene: Gpu3dStressScene, level: Gpu3dStressLevel) {
+        controller.recordGpu3dStep(scene, level)
     }
 
     override fun onCombinedStateChanged(state: CombinedStressState) {
@@ -375,6 +384,9 @@ class StressForegroundService : Service(), CombinedStressController.Listener {
                 putExtra("gpuMode", configuration.gpuMode.name)
                 putExtra("duration", configuration.duration.name)
                 putExtra("screenMode", configuration.screenMode.name)
+                putExtra("gpu3dLevel", configuration.gpu3dLevel.name)
+                putExtra("gpu3dRunMode", configuration.gpu3dRunMode.name)
+                putExtra("gpu3dStepDurationSeconds", configuration.gpu3dStepDurationSeconds)
             }
 
         private fun configurationFromIntent(intent: Intent): CombinedStressConfiguration {
@@ -395,6 +407,17 @@ class StressForegroundService : Service(), CombinedStressController.Listener {
                 gpuMode = enumValue(intent.getStringExtra("gpuMode"), GpuMode.COMPUTE, GpuMode::valueOf),
                 duration = enumValue(intent.getStringExtra("duration"), StressDuration.MINUTES_5, StressDuration::valueOf),
                 screenMode = enumValue(intent.getStringExtra("screenMode"), ScreenMode.ON, ScreenMode::valueOf),
+                gpu3dLevel = enumValue(
+                    intent.getStringExtra("gpu3dLevel"),
+                    Gpu3dStressLevel.MEDIUM,
+                    Gpu3dStressLevel::valueOf,
+                ),
+                gpu3dRunMode = enumValue(
+                    intent.getStringExtra("gpu3dRunMode"),
+                    Gpu3dRunMode.FIXED,
+                    Gpu3dRunMode::valueOf,
+                ),
+                gpu3dStepDurationSeconds = intent.getIntExtra("gpu3dStepDurationSeconds", 20),
             )
         }
     }

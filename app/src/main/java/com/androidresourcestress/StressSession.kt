@@ -27,6 +27,43 @@ enum class GpuMode {
     COMPUTE,
     VISUAL,
     MIXED,
+    WATER_RACE,
+    PARTICLE_STRESS,
+    SHADER_STRESS,
+    GEOMETRY_STRESS,
+    OVERDRAW_STRESS,
+    MAX_GPU_STRESS,
+    ;
+
+    val usesVulkanVisual: Boolean
+        get() = this == VISUAL || this == MIXED
+
+    val usesGpu3d: Boolean
+        get() = this in WATER_RACE..MAX_GPU_STRESS
+
+    val requiresOnscreenSurface: Boolean
+        get() = usesVulkanVisual || usesGpu3d
+
+    val keepsComputeWithSurface: Boolean
+        get() = this == COMPUTE || this == MIXED || this == MAX_GPU_STRESS
+
+    val isOnscreenOnly: Boolean
+        get() = requiresOnscreenSurface && !keepsComputeWithSurface
+
+    fun gpu3dScene(): Gpu3dStressScene? = when (this) {
+        WATER_RACE -> Gpu3dStressScene.WATER_RACE
+        PARTICLE_STRESS -> Gpu3dStressScene.PARTICLE_STORM
+        SHADER_STRESS -> Gpu3dStressScene.SHADER_STRESS
+        GEOMETRY_STRESS -> Gpu3dStressScene.GEOMETRY_STRESS
+        OVERDRAW_STRESS, MAX_GPU_STRESS -> Gpu3dStressScene.OVERDRAW_STRESS
+        else -> null
+    }
+}
+
+enum class Gpu3dRunMode {
+    FIXED,
+    TRAVERSE_LEVELS,
+    TRAVERSE_SCENES,
 }
 
 enum class ScreenMode {
@@ -71,6 +108,9 @@ data class CombinedStressConfiguration(
     val gpuMode: GpuMode = GpuMode.COMPUTE,
     val duration: StressDuration,
     val screenMode: ScreenMode = ScreenMode.ON,
+    val gpu3dLevel: Gpu3dStressLevel = Gpu3dStressLevel.MEDIUM,
+    val gpu3dRunMode: Gpu3dRunMode = Gpu3dRunMode.FIXED,
+    val gpu3dStepDurationSeconds: Int = 20,
 )
 
 enum class SessionEventType {
@@ -81,6 +121,7 @@ enum class SessionEventType {
     VISUAL_RESUMED,
     COMPUTE_FALLBACK_STARTED,
     COMPUTE_FALLBACK_STOPPED,
+    GPU_3D_STEP,
     THERMAL_CHANGE,
     SCREEN_WAKE_REQUEST,
     SCREEN_WAKE_RESULT,
@@ -146,7 +187,9 @@ data class StressSessionSnapshot(
     val endPowerObservation: PowerObservation? = null,
     val peakEstimatedBatteryPowerWatts: Double? = null,
     val peakVisualFps: Double = 0.0,
+    val minimumVisualFps: Double = 0.0,
     val averageVisualFrameTimeNanos: Double = 0.0,
+    val maximumVisualFrameTimeNanos: Double = 0.0,
     val screenMode: ScreenMode = configuration.screenMode,
     val screenOffAtElapsedMs: Long? = null,
     val screenOnAtElapsedMs: Long? = null,

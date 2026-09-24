@@ -65,14 +65,39 @@ object SessionResultFormatter {
             context.getString(R.string.label_gpu_average_work),
             String.format(Locale.US, "%.3f ms", session.averageGpuWorkTimeNanos / 1_000_000.0),
         )
-        if (session.configuration.gpuMode != GpuMode.COMPUTE) {
+        if (session.configuration.gpuMode.requiresOnscreenSurface) {
             line(
                 context.getString(R.string.label_visual_peak_fps),
                 String.format(Locale.US, "%.1f FPS", session.peakVisualFps),
             )
             line(
+                context.getString(R.string.label_visual_minimum_fps),
+                String.format(Locale.US, "%.1f FPS", session.minimumVisualFps),
+            )
+            line(
                 context.getString(R.string.label_visual_average_frame),
                 String.format(Locale.US, "%.2f ms", session.averageVisualFrameTimeNanos / 1_000_000.0),
+            )
+            line(
+                context.getString(R.string.label_visual_maximum_frame),
+                String.format(Locale.US, "%.2f ms", session.maximumVisualFrameTimeNanos / 1_000_000.0),
+            )
+        }
+        if (session.configuration.gpuMode.usesGpu3d) {
+            val effectiveLevel = if (session.configuration.gpuMode == GpuMode.MAX_GPU_STRESS) {
+                Gpu3dStressLevel.MAX
+            } else {
+                session.configuration.gpu3dLevel
+            }
+            line(
+                context.getString(R.string.label_gpu3d_configuration),
+                "${context.gpuModeLabel(session.configuration.gpuMode)} · " +
+                    "${context.getString(effectiveLevel.labelResource())} · " +
+                    "${context.gpu3dRunModeLabel(session.configuration.gpu3dRunMode)} · " +
+                    context.getString(
+                        R.string.gpu3d_step_seconds_value,
+                        session.configuration.gpu3dStepDurationSeconds,
+                    ),
             )
         }
         line(

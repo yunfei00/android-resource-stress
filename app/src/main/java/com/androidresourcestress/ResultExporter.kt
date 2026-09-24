@@ -99,10 +99,26 @@ class ResultExporter(private val activity: Activity) {
                 put("enabled", session.configuration.gpuEnabled)
                 put("targetPercent", session.configuration.gpuTargetPercent)
                 put("mode", session.configuration.gpuMode.name)
+                put("gpu3dLevel", session.configuration.gpu3dLevel.name)
+                put(
+                    "gpu3dEffectiveLevel",
+                    if (session.configuration.gpuMode == GpuMode.MAX_GPU_STRESS) {
+                        Gpu3dStressLevel.MAX.name
+                    } else {
+                        session.configuration.gpu3dLevel.name
+                    },
+                )
+                put("gpu3dRunMode", session.configuration.gpu3dRunMode.name)
+                put(
+                    "gpu3dStepDurationSeconds",
+                    session.configuration.gpu3dStepDurationSeconds,
+                )
                 put("peakDispatchRatePerSecond", session.peakDispatchRate)
                 put("averageWorkTimeNanos", session.averageGpuWorkTimeNanos)
                 put("peakVisualFps", session.peakVisualFps)
+                put("minimumVisualFps", session.minimumVisualFps)
                 put("averageVisualFrameTimeNanos", session.averageVisualFrameTimeNanos)
+                put("maximumVisualFrameTimeNanos", session.maximumVisualFrameTimeNanos)
             })
             put("memory", JSONObject().apply {
                 put("enabled", session.configuration.memoryEnabled)

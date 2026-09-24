@@ -47,6 +47,10 @@ class AppPreferences(context: Context) {
             gpuMode = enumPreference(KEY_GPU_MODE, GpuMode.COMPUTE),
             duration = enumPreference(KEY_DURATION, StressDuration.MINUTES_5),
             screenMode = enumPreference(KEY_SCREEN_MODE, ScreenMode.ON),
+            gpu3dLevel = enumPreference(KEY_GPU3D_LEVEL, Gpu3dStressLevel.MEDIUM),
+            gpu3dRunMode = enumPreference(KEY_GPU3D_RUN_MODE, Gpu3dRunMode.FIXED),
+            gpu3dStepDurationSeconds = preferences.getInt(KEY_GPU3D_STEP_SECONDS, 20)
+                .coerceIn(Gpu3dAutoDuration.MIN_SECONDS, Gpu3dAutoDuration.MAX_SECONDS),
         )
     }
 
@@ -65,6 +69,9 @@ class AppPreferences(context: Context) {
             .putString(KEY_GPU_MODE, configuration.gpuMode.name)
             .putString(KEY_DURATION, configuration.duration.name)
             .putString(KEY_SCREEN_MODE, configuration.screenMode.name)
+            .putString(KEY_GPU3D_LEVEL, configuration.gpu3dLevel.name)
+            .putString(KEY_GPU3D_RUN_MODE, configuration.gpu3dRunMode.name)
+            .putInt(KEY_GPU3D_STEP_SECONDS, configuration.gpu3dStepDurationSeconds)
             .apply()
     }
 
@@ -77,6 +84,9 @@ class AppPreferences(context: Context) {
                 storageLevel = current.storageLevel,
                 gpuMode = current.gpuMode,
                 screenMode = current.screenMode,
+                gpu3dLevel = current.gpu3dLevel,
+                gpu3dRunMode = current.gpu3dRunMode,
+                gpu3dStepDurationSeconds = current.gpu3dStepDurationSeconds,
             ),
         )
     }
@@ -109,6 +119,9 @@ class AppPreferences(context: Context) {
         private const val KEY_GPU_MODE = "gpu_mode"
         private const val KEY_DURATION = "duration"
         private const val KEY_SCREEN_MODE = "screen_mode"
+        private const val KEY_GPU3D_LEVEL = "gpu3d_level"
+        private const val KEY_GPU3D_RUN_MODE = "gpu3d_run_mode"
+        private const val KEY_GPU3D_STEP_SECONDS = "gpu3d_step_seconds"
         const val DEFAULT_HISTORY_LIMIT = 30
         const val MIN_HISTORY_LIMIT = 20
         const val MAX_HISTORY_LIMIT = 50

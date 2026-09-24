@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased — GPU 3D Integration (Phase 5)
+
+- 将 Water Race、Particle、Shader、Geometry、Overdraw 接入统一 GPU Stress 选择与 Foreground Service Session。
+- 增加 `MAX GPU Stress`：最高档 3D Overdraw 与 Vulkan Compute 同时运行。
+- 增加 Fixed、Traverse Levels、Traverse Scenes 和可配置 step duration，固定场景持续循环，遍历模式按 Session 时长循环执行。
+- GPU 3D 复用统一 START/STOP、Duration、Thermal Protection、Screen-Off fallback、Diagnostic Log、History、Result 和 JSON Export。
+- Session schema 升级为 4，保存 GPU 3D 配置、峰值/最低 FPS、平均/最大 Frame Time 和场景切换事件，并兼容旧数据。
+- 增加 Phase 5 JVM 配置/序列化测试和真机 instrumentation harness；正式稳定性与发布验收留待 Phase 6。
+
 ## 0.5.0 — GPU / Background / Screen-Off / UI Upgrade
 
 - GPU Stress V2：三轮启动校准、3 个 bounded in-flight Compute batch，移除 steady-state 全队列 idle。

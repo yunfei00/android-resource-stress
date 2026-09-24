@@ -2,7 +2,7 @@
 
 Android Resource Stress 是一个完全离线运行的 Android 真机资源压力、热稳定性和工程观测工具。它主动调动 CPU、Vulkan GPU、内存和可选的 app-private Storage I/O；它不是 Benchmark，不计算综合分数，也没有排行榜或云服务。
 
-当前版本为 `0.5.0` / `v0.5.0`。Phase 4 的产品化能力全部保留；本次增量升级聚焦 GPU Stress V2、Foreground Service、Screen-Off 和 UI V2，不称为 Phase 5。
+当前稳定发布版本为 `0.5.0` / `v0.5.0`。`feature/gpu-3d-stress` 分支已完成 GPU 3D Stress Phase 5 集成；正式稳定性验收、版本发布和 Tag 属于后续 Phase 6，本阶段不提前发布。
 
 ## Purpose
 
@@ -13,7 +13,9 @@ Android Resource Stress 是一个完全离线运行的 Android 真机资源压�
 - Native C++17 CPU Stress：25% / 50% / 75% / 100% duty cycle
 - Vulkan Compute GPU Stress：启动校准、3 个 bounded in-flight batch、timestamp query
 - Vulkan Visual GPU Stress：专用近全屏页面、SurfaceView / ANativeWindow / Vulkan swapchain 和实际 FPS
-- GPU Compute / Visual / Mixed 模式
+- OpenGL ES 3 GPU 3D Stress：Water Race、Particle、Shader、Geometry、Overdraw 五类真实场景
+- GPU Compute / Video Rendering / 3D scenes / MAX GPU Stress 统一模式
+- GPU 3D 固定循环、逐档位遍历、逐场景遍历和可配置 step duration
 - Native Memory Stress：256 MB / 512 MB / 1 GB / Auto-safe
 - Storage READ / WRITE / MIXED：128 / 256 / 512 MB app-private working set
 - CPU、GPU、Memory、Storage 任意组合与统一 START/STOP 状态机
@@ -62,6 +64,19 @@ Visual 使用专用 `GpuVisualActivity`。约 80%～90% 屏幕是实际 Vulkan �
 
 Visual Surface 在 Activity `onStop()` / Surface destroy 时停止，Service Session 不停止。Mixed 的 Compute 从不因 Surface 生命周期重启；Visual-only 在不可见/灭屏期间切换到 Compute，Surface 恢复后停止 fallback 并恢复 Visual。Phase 4 的 bounded offscreen graphics backend 仍保留，但 v0.5 可见场景不会与它重复叠加。FPS 是 swapchain 实际呈现指标，不是综合跑分。
 
+## GPU 3D Stress
+
+GPU 3D 使用独立 `Gpu3dStressActivity`、`GLSurfaceView` 和 OpenGL ES 3 renderer，不替换现有 Vulkan Compute/Visual 核心。所有模式由同一个 Foreground Service Session 持有，并复用统一 Start、Stop、Duration、Thermal、History、Log 与 Result 管线。
+
+- `3D Water Race`：水面、船体、赛道门和动态相机
+- `Particle Stress`：大量动态粒子与透明混合
+- `Shader Stress`：提高 fragment shader 计算量
+- `Geometry Stress`：提高 mesh/triangle/draw-call 压力
+- `Overdraw Stress`：多层透明覆盖与高 fragment fill
+- `MAX GPU Stress`：Vulkan Compute 与最高档 Overdraw 同时运行
+
+每个 3D 场景支持 LOW / MEDIUM / HIGH / EXTREME / MAX。`Fixed` 持续循环所选场景和档位；`Traverse Levels` 自动遍历同一场景的五个档位；`Traverse Scenes` 自动遍历五类场景。step duration 只控制遍历切换间隔，整个 Session 仍由统一 Duration 或用户 STOP 结束。结果保存峰值/最低 FPS、平均/最大 Frame Time 和稀疏场景切换事件；这些值是实时渲染活动指标，不是综合跑分。
+
 ## Background and Screen-Off
 
 `StressForegroundService` 独占 `CombinedStressController`、Session timer、Thermal protection 和各资源生命周期；Stress / Monitor / Visual Activity 只 bind/observe。Android 14+ 使用声明完整的 `specialUse` Foreground Service，常驻通知展示 Preset、Elapsed、Thermal，并提供 Open / Stop。
@@ -72,6 +87,8 @@ Session RUNNING 时持有非引用计数的 `PARTIAL_WAKE_LOCK`，任何 STOP、
 CPU / Memory / Storage / GPU Compute  screen off 后继续
 Mixed                                  Visual pause，Compute 继续
 Visual-only                             Compute fallback；亮屏并恢复 Surface 后回到 Visual
+3D scene-only                           3D Surface pause，Compute fallback；恢复后回到原场景
+MAX GPU Stress                          3D Surface pause，Compute 持续运行
 ```
 
 Duration、CRITICAL+ 或资源错误结束灭屏 Session 时，App 使用普通 Android wake capability best-effort 点亮显示；失败时以完成通知兜底，不尝试自动解锁。
@@ -144,7 +161,7 @@ Qualcomm/MediaTek backend 当前负责 vendor discovery 和可用节点框架。
 
 ## Session History
 
-Session 以向后兼容的版本化 JSON 保存于 app-private files。默认保留最近 30 条，Settings 可选 20/30/50。内容包含配置、资源峰值、Thermal Timeline、CPU policy frequency 起始/最低/峰值/结束、电池侧 power observation、停止原因，以及 screen mode/off duration/transitions/fallback/wake 和稀疏 Session Event Timeline。旧 Phase 4 schema 缺失字段时使用安全默认值。
+Session 以向后兼容的版本化 JSON 保存于 app-private files。默认保留最近 30 条，Settings 可选 20/30/50。schema 4 内容包含配置、资源峰值、Thermal Timeline、CPU policy frequency 起始/最低/峰值/结束、电池侧 power observation、停止原因、screen mode/off duration/transitions/fallback/wake、GPU 3D 场景/档位/遍历配置、FPS/Frame Time 范围和稀疏 Session Event Timeline。旧 schema 缺失字段时使用安全默认值。
 
 ## Export
 
@@ -197,6 +214,7 @@ Stress / Monitor / History 页面只负责配置与显示；`StressForegroundSer
 - Thermal Protection 永远开启，不提供绕过入口。
 - Memory 保留安全 RAM；Storage 保留 2 GiB 且最多取可用空间 10%。
 - GPU command submission 有界；Visual/Compute worker 均可停止并 join。
+- GPU 3D Surface 在 pause/destroy 时同步停止 renderer；Service Session 按模式保留 Compute 或启用安全 fallback。
 - Manifest 不申请 INTERNET、外部存储或 MANAGE_EXTERNAL_STORAGE。
 
 ## Limitations
