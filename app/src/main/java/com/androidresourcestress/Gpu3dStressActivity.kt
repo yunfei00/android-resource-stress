@@ -23,6 +23,7 @@ class Gpu3dStressActivity : LocalizedActivity() {
     private lateinit var frameTime: TextView
     private lateinit var maximumFrameTime: TextView
     private lateinit var runtime: TextView
+    private lateinit var sceneSpinner: Spinner
     private lateinit var stressLevelSpinner: Spinner
     private lateinit var renderResolution: TextView
     private lateinit var fpsLimit: TextView
@@ -84,6 +85,7 @@ class Gpu3dStressActivity : LocalizedActivity() {
     override fun onSaveInstanceState(outState: Bundle) {
         if (::stressLevelSpinner.isInitialized) {
             outState.putInt(STATE_LEVEL, stressLevelSpinner.selectedItemPosition)
+            outState.putInt(STATE_SCENE, sceneSpinner.selectedItemPosition)
         }
         super.onSaveInstanceState(outState)
     }
@@ -97,6 +99,7 @@ class Gpu3dStressActivity : LocalizedActivity() {
         frameTime = findViewById(R.id.gpu3dFrameTimeValue)
         maximumFrameTime = findViewById(R.id.gpu3dMaximumFrameTimeValue)
         runtime = findViewById(R.id.gpu3dRuntimeValue)
+        sceneSpinner = findViewById(R.id.gpu3dSceneSpinner)
         stressLevelSpinner = findViewById(R.id.gpu3dStressLevelSpinner)
         renderResolution = findViewById(R.id.gpu3dRenderResolutionValue)
         fpsLimit = findViewById(R.id.gpu3dFpsLimitValue)
@@ -106,6 +109,11 @@ class Gpu3dStressActivity : LocalizedActivity() {
     }
 
     private fun configureControls(savedInstanceState: Bundle?) {
+        sceneSpinner.adapter = ArrayAdapter(
+            this,
+            android.R.layout.simple_spinner_item,
+            Gpu3dStressScene.entries.map { getString(it.labelResource()) },
+        ).apply { setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
         stressLevelSpinner.adapter = ArrayAdapter(
             this,
             android.R.layout.simple_spinner_item,
@@ -114,26 +122,52 @@ class Gpu3dStressActivity : LocalizedActivity() {
         stressLevelSpinner.setSelection(
             savedInstanceState?.getInt(STATE_LEVEL) ?: Gpu3dStressLevel.MEDIUM.ordinal,
         )
-        stressLevelSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
-            override fun onItemSelected(parent: AdapterView<*>?, view: android.view.View?, position: Int, id: Long) {
-                renderProfile(Gpu3dStressLevel.entries[position].profile)
+        sceneSpinner.setSelection(
+            savedInstanceState?.getInt(STATE_SCENE) ?: Gpu3dStressScene.WATER_RACE.ordinal,
+        )
+        val selectionListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(
+                parent: AdapterView<*>?,
+                view: android.view.View?,
+                position: Int,
+                id: Long,
+            ) {
+                renderProfile(selectedConfiguration().workload)
             }
 
             override fun onNothingSelected(parent: AdapterView<*>?) = Unit
         }
-        renderProfile(selectedLevel().profile)
+        sceneSpinner.onItemSelectedListener = selectionListener
+        stressLevelSpinner.onItemSelectedListener = selectionListener
+        renderProfile(selectedConfiguration().workload)
     }
 
     private fun startTest() {
         if (!resumed || surface.snapshot().running) return
-        val configuration = Gpu3dStressConfiguration(
-            level = selectedLevel(),
-        )
+        val configuration = selectedConfiguration()
         reportedError = ""
         surface.startTest(configuration)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         setControlsRunning(true)
-        renderMetrics(surface.snapshot())
+        val workload = configuration.workload
+        renderMetrics(
+            Gpu3dStressMetrics(
+                running = true,
+                level = configuration.level,
+                scene = configuration.scene,
+                resolution = configuration.resolution,
+                fpsLimit = configuration.fpsLimit,
+                renderWidth = configuration.profile.renderWidth,
+                renderHeight = configuration.profile.renderHeight,
+                msaaSamples = configuration.profile.msaaSamples,
+                modelCount = workload.sceneModelCount,
+                triangleCount = workload.triangleCount,
+                particleCount = workload.particleCount,
+                particleLayers = workload.particleLayers,
+                shaderIterations = workload.shaderIterations,
+                overdrawLayers = workload.fullScreenOverdrawLayers,
+            ),
+        )
     }
 
     private fun stopTest() {
@@ -145,6 +179,7 @@ class Gpu3dStressActivity : LocalizedActivity() {
     }
 
     private fun setControlsRunning(running: Boolean) {
+        sceneSpinner.isEnabled = !running
         stressLevelSpinner.isEnabled = !running
         startButton.isEnabled = !running
         stopButton.isEnabled = running
@@ -179,10 +214,18 @@ class Gpu3dStressActivity : LocalizedActivity() {
             metrics.maximumFrameTimeMs,
         )
         runtime.text = DurationFormatter.format(metrics.runtimeMs)
-        val profile = metrics.level.profile
+        val configuration = if (metrics.running || failed) {
+            Gpu3dStressConfiguration(metrics.level, metrics.scene)
+        } else {
+            selectedConfiguration()
+        }
         renderProfile(
-            profile,
-            if (metrics.renderedFrames > 0L) metrics.msaaSamples else profile.msaaSamples,
+            configuration.workload,
+            if (metrics.running && metrics.renderedFrames > 0L) {
+                metrics.msaaSamples
+            } else {
+                configuration.profile.msaaSamples
+            },
         )
         if (failed && reportedError != metrics.lastError) {
             reportedError = metrics.lastError
@@ -197,7 +240,11 @@ class Gpu3dStressActivity : LocalizedActivity() {
         }
     }
 
-    private fun renderProfile(profile: Gpu3dStressProfile, actualMsaaSamples: Int = profile.msaaSamples) {
+    private fun renderProfile(
+        workload: Gpu3dSceneWorkload,
+        actualMsaaSamples: Int = workload.profile.msaaSamples,
+    ) {
+        val profile = workload.profile
         renderResolution.text = getString(
             R.string.gpu3d_resolution_value,
             profile.renderWidth,
@@ -210,21 +257,30 @@ class Gpu3dStressActivity : LocalizedActivity() {
         profileSummary.text = getString(
             R.string.gpu3d_profile_summary,
             profile.renderScale,
-            profile.sceneModelCount,
-            profile.triangleCount,
-            profile.particleCount,
-            profile.overdrawLayers,
+            workload.sceneModelCount,
+            workload.triangleCount,
+            workload.particleCount,
+            workload.particleLayers,
             profile.lightCount,
             actualMsaaSamples,
             profile.shadowMapSize,
-            profile.shaderIterations,
-            profile.postProcessQuality,
-            profile.reflectionSteps,
+            workload.shaderIterations,
+            workload.postProcessQuality,
+            workload.reflectionSteps,
+            workload.fullScreenOverdrawLayers,
         )
     }
 
+    private fun selectedConfiguration(): Gpu3dStressConfiguration = Gpu3dStressConfiguration(
+        level = selectedLevel(),
+        scene = selectedScene(),
+    )
+
     private fun selectedLevel(): Gpu3dStressLevel =
         Gpu3dStressLevel.entries[stressLevelSpinner.selectedItemPosition.coerceAtLeast(0)]
+
+    private fun selectedScene(): Gpu3dStressScene =
+        Gpu3dStressScene.entries[sceneSpinner.selectedItemPosition.coerceAtLeast(0)]
 
     private fun Gpu3dStressLevel.labelResource(): Int = when (this) {
         Gpu3dStressLevel.LOW -> R.string.gpu3d_level_low
@@ -232,6 +288,14 @@ class Gpu3dStressActivity : LocalizedActivity() {
         Gpu3dStressLevel.HIGH -> R.string.gpu3d_level_high
         Gpu3dStressLevel.EXTREME -> R.string.gpu3d_level_extreme
         Gpu3dStressLevel.MAX -> R.string.gpu3d_level_max
+    }
+
+    private fun Gpu3dStressScene.labelResource(): Int = when (this) {
+        Gpu3dStressScene.WATER_RACE -> R.string.gpu3d_scene_water_race
+        Gpu3dStressScene.PARTICLE_STORM -> R.string.gpu3d_scene_particle_storm
+        Gpu3dStressScene.SHADER_STRESS -> R.string.gpu3d_scene_shader_stress
+        Gpu3dStressScene.GEOMETRY_STRESS -> R.string.gpu3d_scene_geometry_stress
+        Gpu3dStressScene.OVERDRAW_STRESS -> R.string.gpu3d_scene_overdraw_stress
     }
 
     private val metricsRunnable = object : Runnable {
@@ -246,5 +310,6 @@ class Gpu3dStressActivity : LocalizedActivity() {
         const val REQUIRED_GLES_VERSION = 0x00030000
         const val METRICS_INTERVAL_MS = 500L
         const val STATE_LEVEL = "gpu3d.level"
+        const val STATE_SCENE = "gpu3d.scene"
     }
 }

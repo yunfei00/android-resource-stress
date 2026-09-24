@@ -368,8 +368,8 @@
     <string name="session_event_timeline_item">%1$s    %2$s    %3$s</string>
     <string name="gpu3d_open">Open GPU 3D Stress</string>
     <string name="gpu3d_title">GPU 3D Stress</string>
-    <string name="gpu3d_mode_water_race">Mode: Water Race · Phase 2</string>
-    <string name="gpu3d_scene_description">Continuous GPU 3D water race stress scene</string>
+    <string name="gpu3d_mode_water_race">Multi-scene GPU workload · Phase 3</string>
+    <string name="gpu3d_scene_description">Continuous multi-scene GPU 3D stress rendering</string>
     <string name="gpu3d_current_fps">Current FPS</string>
     <string name="gpu3d_average_fps">Average FPS</string>
     <string name="gpu3d_minimum_fps">Minimum FPS</string>
@@ -379,6 +379,12 @@
     <string name="gpu3d_resolution_setting">Internal rendering resolution</string>
     <string name="gpu3d_fps_setting">Frame-rate limit</string>
     <string name="gpu3d_stress_level">GPU stress level</string>
+    <string name="gpu3d_scene">GPU stress scene</string>
+    <string name="gpu3d_scene_water_race">Water Race</string>
+    <string name="gpu3d_scene_particle_storm">Particle Storm</string>
+    <string name="gpu3d_scene_shader_stress">Shader Stress</string>
+    <string name="gpu3d_scene_geometry_stress">Geometry Stress</string>
+    <string name="gpu3d_scene_overdraw_stress">Overdraw Stress</string>
     <string name="gpu3d_level_low">Low</string>
     <string name="gpu3d_level_medium">Medium</string>
     <string name="gpu3d_level_high">High</string>
@@ -387,7 +393,7 @@
     <string name="gpu3d_resolution_placeholder">— × —</string>
     <string name="gpu3d_resolution_value">%1$d × %2$d</string>
     <string name="gpu3d_fps_limit_value">%1$d FPS</string>
-    <string name="gpu3d_profile_summary">Scale %1$.2f× · %2$d models · %3$d triangles\n%4$d particles × %5$d layers · %6$d lights · %7$d× MSAA\nShadow %8$d · Shader %9$d · Post %10$d · Reflection %11$d</string>
+    <string name="gpu3d_profile_summary">Scale %1$.2f× · %2$d models · %3$d triangles\n%4$d particles × %5$d layers · %6$d lights · %7$d× MSAA\nShadow %8$d · Shader %9$d · Post %10$d · Reflection %11$d · Overdraw %12$d</string>
     <string name="gpu3d_720p">720P · 1280 × 720</string>
     <string name="gpu3d_1080p">1080P · 1920 × 1080</string>
     <string name="gpu3d_30_fps">30 FPS</string>

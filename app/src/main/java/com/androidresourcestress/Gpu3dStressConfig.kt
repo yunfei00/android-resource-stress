@@ -15,6 +15,19 @@ enum class Gpu3dFpsLimit(val framesPerSecond: Int) {
     FPS_60(60),
 }
 
+enum class Gpu3dStressScene {
+    WATER_RACE,
+    PARTICLE_STORM,
+    SHADER_STRESS,
+    GEOMETRY_STRESS,
+    OVERDRAW_STRESS,
+}
+
+enum class Gpu3dGeometryPrimitive {
+    CUBE,
+    DENSE_SPHERE,
+}
+
 data class Gpu3dStressProfile(
     val resolution: Gpu3dResolution,
     val fpsLimit: Gpu3dFpsLimit,
@@ -103,10 +116,117 @@ enum class Gpu3dStressLevel(val profile: Gpu3dStressProfile) {
     ),
 }
 
+data class Gpu3dSceneWorkload(
+    val scene: Gpu3dStressScene,
+    val profile: Gpu3dStressProfile,
+    val waterColumns: Int = profile.waterColumns,
+    val waterRows: Int = profile.waterRows,
+    val buoyCount: Int = profile.buoyCount,
+    val obstacleCount: Int = profile.obstacleCount,
+    val gateCount: Int = profile.gateCount,
+    val particleCount: Int = profile.particleCount,
+    val particleLayers: Int = profile.overdrawLayers,
+    val shaderIterations: Int = profile.shaderIterations,
+    val waterWaveLayers: Int = profile.waterWaveLayers,
+    val reflectionSteps: Int = profile.reflectionSteps,
+    val postProcessQuality: Int = profile.postProcessQuality,
+    val geometryPrimitive: Gpu3dGeometryPrimitive = Gpu3dGeometryPrimitive.CUBE,
+    val geometrySegments: Int = 1,
+    val geometryRings: Int = 1,
+    val fullScreenOverdrawLayers: Int = 0,
+) {
+    val primitiveTriangleCount: Int = when (geometryPrimitive) {
+        Gpu3dGeometryPrimitive.CUBE -> CUBE_TRIANGLES
+        Gpu3dGeometryPrimitive.DENSE_SPHERE -> geometrySegments * geometryRings * 2
+    }
+    val sceneModelCount: Int = buoyCount + obstacleCount + RACER_PARTS + gateCount * GATE_PARTS
+    val triangleCount: Int = waterColumns * waterRows * 2 +
+        sceneModelCount * primitiveTriangleCount
+
+    init {
+        require(waterColumns > 0 && waterRows > 0)
+        require(buoyCount > 0 && buoyCount % 2 == 0)
+        require(obstacleCount > 0 && gateCount > 0)
+        require(particleCount > 0 && particleLayers > 0)
+        require(shaderIterations in 1..MAX_SHADER_ITERATIONS)
+        require(waterWaveLayers in 1..6)
+        require(reflectionSteps in 0..8)
+        require(postProcessQuality in 0..4)
+        require(geometrySegments > 0 && geometryRings > 0)
+        require(fullScreenOverdrawLayers in 0..MAX_OVERDRAW_LAYERS)
+    }
+
+    companion object {
+        const val RACER_PARTS = 8
+        const val GATE_PARTS = 4
+        const val CUBE_TRIANGLES = 12
+        const val MAX_SHADER_ITERATIONS = 64
+        const val MAX_OVERDRAW_LAYERS = 32
+
+        fun create(level: Gpu3dStressLevel, scene: Gpu3dStressScene): Gpu3dSceneWorkload {
+            val profile = level.profile
+            val geometryMultipliers = intArrayOf(2, 3, 4, 6, 8)
+            val geometrySegments = intArrayOf(12, 16, 20, 24, 32)
+            val geometryRings = intArrayOf(8, 10, 14, 18, 24)
+            val particleMultipliers = intArrayOf(4, 5, 6, 7, 8)
+            val overdrawLayers = intArrayOf(4, 8, 14, 22, 32)
+            val index = level.ordinal
+            return when (scene) {
+                Gpu3dStressScene.WATER_RACE -> Gpu3dSceneWorkload(scene, profile)
+                Gpu3dStressScene.PARTICLE_STORM -> Gpu3dSceneWorkload(
+                    scene = scene,
+                    profile = profile,
+                    particleCount = profile.particleCount * particleMultipliers[index],
+                    particleLayers = profile.overdrawLayers + 2,
+                    shaderIterations = maxOf(4, profile.shaderIterations / 2),
+                    reflectionSteps = maxOf(1, profile.reflectionSteps / 2),
+                )
+                Gpu3dStressScene.SHADER_STRESS -> Gpu3dSceneWorkload(
+                    scene = scene,
+                    profile = profile,
+                    particleCount = maxOf(32, profile.particleCount / 2),
+                    particleLayers = 1,
+                    shaderIterations = minOf(
+                        MAX_SHADER_ITERATIONS,
+                        profile.shaderIterations * 2 + 12,
+                    ),
+                    waterWaveLayers = 6,
+                    reflectionSteps = minOf(8, profile.reflectionSteps + 2),
+                    postProcessQuality = maxOf(2, profile.postProcessQuality),
+                )
+                Gpu3dStressScene.GEOMETRY_STRESS -> {
+                    val multiplier = geometryMultipliers[index]
+                    Gpu3dSceneWorkload(
+                        scene = scene,
+                        profile = profile,
+                        buoyCount = profile.buoyCount * multiplier,
+                        obstacleCount = profile.obstacleCount * multiplier,
+                        gateCount = profile.gateCount * multiplier,
+                        particleCount = maxOf(32, profile.particleCount / 2),
+                        particleLayers = 1,
+                        geometryPrimitive = Gpu3dGeometryPrimitive.DENSE_SPHERE,
+                        geometrySegments = geometrySegments[index],
+                        geometryRings = geometryRings[index],
+                    )
+                }
+                Gpu3dStressScene.OVERDRAW_STRESS -> Gpu3dSceneWorkload(
+                    scene = scene,
+                    profile = profile,
+                    particleCount = profile.particleCount * 2,
+                    particleLayers = profile.overdrawLayers + 1,
+                    fullScreenOverdrawLayers = overdrawLayers[index],
+                )
+            }
+        }
+    }
+}
+
 data class Gpu3dStressConfiguration(
     val level: Gpu3dStressLevel = Gpu3dStressLevel.MEDIUM,
+    val scene: Gpu3dStressScene = Gpu3dStressScene.WATER_RACE,
 ) {
     val profile: Gpu3dStressProfile get() = level.profile
+    val workload: Gpu3dSceneWorkload = Gpu3dSceneWorkload.create(level, scene)
     val resolution: Gpu3dResolution get() = profile.resolution
     val fpsLimit: Gpu3dFpsLimit get() = profile.fpsLimit
 }
@@ -121,11 +241,18 @@ data class Gpu3dStressMetrics(
     val runtimeMs: Long = 0L,
     val renderedFrames: Long = 0L,
     val level: Gpu3dStressLevel = Gpu3dStressLevel.MEDIUM,
+    val scene: Gpu3dStressScene = Gpu3dStressScene.WATER_RACE,
     val resolution: Gpu3dResolution = Gpu3dResolution.P720,
     val fpsLimit: Gpu3dFpsLimit = Gpu3dFpsLimit.FPS_60,
     val renderWidth: Int = 0,
     val renderHeight: Int = 0,
     val msaaSamples: Int = 1,
+    val modelCount: Int = 0,
+    val triangleCount: Int = 0,
+    val particleCount: Int = 0,
+    val particleLayers: Int = 0,
+    val shaderIterations: Int = 0,
+    val overdrawLayers: Int = 0,
     val lastError: String = "",
 )
 

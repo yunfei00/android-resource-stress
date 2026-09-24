@@ -91,6 +91,7 @@ class Phase4DeviceHarness : Instrumentation(), CombinedStressController.Listener
                 "gpu3dPhase0" -> exerciseGpu3dPhase0()
                 "gpu3dPhase1" -> exerciseGpu3dPhase1()
                 "gpu3dPhase2" -> exerciseGpu3dPhase2()
+                "gpu3dPhase3" -> exerciseGpu3dPhase3()
                 "visualLifecycle" -> exerciseVisualLifecycle()
                 "serviceLifecycle" -> exerciseServiceLifecycle()
                 "notificationStop" -> exerciseNotificationStop()
@@ -593,6 +594,66 @@ class Phase4DeviceHarness : Instrumentation(), CombinedStressController.Listener
                     "shadow=${profile.shadowMapSize} lights=${profile.lightCount} " +
                     "shader=${profile.shaderIterations} MSAA=${metrics.msaaSamples} " +
                     "post=${profile.postProcessQuality} reflection=${profile.reflectionSteps}"
+            }
+        } finally {
+            runOnMainSync { activity.finish() }
+        }
+    }
+
+    private fun exerciseGpu3dPhase3(): List<String> {
+        val activity = startActivitySync(
+            Intent(targetContext, Gpu3dStressActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+        ) as Gpu3dStressActivity
+        val surface = activity.findViewById<Gpu3dStressSurfaceView>(R.id.gpu3dSurface)
+        val sceneSpinner = activity.findViewById<Spinner>(R.id.gpu3dSceneSpinner)
+        val levelSpinner = activity.findViewById<Spinner>(R.id.gpu3dStressLevelSpinner)
+        val start = activity.findViewById<Button>(R.id.gpu3dStartButton)
+        val stop = activity.findViewById<Button>(R.id.gpu3dStopButton)
+        val runMs = argumentLong("runMs", 5_000L).coerceAtLeast(3_000L)
+        val level = runCatching {
+            Gpu3dStressLevel.valueOf(
+                arguments.getString("level", "HIGH")!!.uppercase(Locale.US),
+            )
+        }.getOrDefault(Gpu3dStressLevel.HIGH)
+
+        return try {
+            Gpu3dStressScene.entries.map { scene ->
+                val workload = Gpu3dStressConfiguration(level, scene).workload
+                runOnMainSync {
+                    sceneSpinner.setSelection(scene.ordinal)
+                    levelSpinner.setSelection(level.ordinal)
+                    start.performClick()
+                }
+                val deadline = SystemClock.elapsedRealtime() + runMs
+                while (SystemClock.elapsedRealtime() < deadline) {
+                    SystemClock.sleep(
+                        (deadline - SystemClock.elapsedRealtime()).coerceIn(1L, 5_000L),
+                    )
+                    val sample = surface.snapshot()
+                    check(sample.running) { "${scene.name} stopped: ${sample.lastError}" }
+                    check(sample.renderedFrames > 0L) { "${scene.name} rendered no frames" }
+                }
+                val metrics = surface.snapshot()
+                check(metrics.scene == scene) { "${scene.name} reported ${metrics.scene.name}" }
+                check(metrics.level == level)
+                check(metrics.currentFps > 0.0) { "${scene.name} measured no FPS" }
+                check(metrics.modelCount == workload.sceneModelCount)
+                check(metrics.triangleCount == workload.triangleCount)
+                check(metrics.particleCount == workload.particleCount)
+                check(metrics.particleLayers == workload.particleLayers)
+                check(metrics.shaderIterations == workload.shaderIterations)
+                check(metrics.overdrawLayers == workload.fullScreenOverdrawLayers)
+                runOnMainSync { stop.performClick() }
+                SystemClock.sleep(500L)
+                check(!surface.snapshot().running) { "${scene.name} did not stop" }
+                "${scene.name}/${level.name}: " +
+                    "fps=${String.format(Locale.US, "%.1f", metrics.currentFps)} " +
+                    "frameMs=${String.format(Locale.US, "%.2f", metrics.frameTimeMs)} " +
+                    "models=${metrics.modelCount} triangles=${metrics.triangleCount} " +
+                    "particles=${metrics.particleCount}x${metrics.particleLayers} " +
+                    "shader=${metrics.shaderIterations} overdraw=${metrics.overdrawLayers} " +
+                    "startStop=PASS"
             }
         } finally {
             runOnMainSync { activity.finish() }
